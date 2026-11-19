@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useTheme } from "next-themes";
 import Link from "next/link";
-import { BookOpenCheck, Bot, Brain, Check, Code2, FileText, LogOut, Monitor, Moon, MoreHorizontal, PanelLeftClose, Pencil, SquarePen, Sun, Trash2, X } from "lucide-react";
+import { BookOpenCheck, Bot, Brain, Check, Code2, FileText, Users, LogOut, Monitor, Moon, MoreHorizontal, PanelLeftClose, Pencil, SquarePen, Sun, Trash2, X } from "lucide-react";
 import type { Conversation, User } from "@/lib/types";
 import { cn, groupByDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -55,6 +55,9 @@ export function Sidebar({ open, onClose, user, conversations, activeId, onSelect
           </Button>
           <Button asChild variant="ghost" className="w-full justify-start">
             <Link href="/agent"><Bot /> Autonomous agent</Link>
+          </Button>
+          <Button asChild variant="ghost" className="w-full justify-start">
+            <Link href="/team"><Users /> Agent team</Link>
           </Button>
           <Button asChild variant="ghost" className="w-full justify-start">
             <Link href="/code"><Code2 /> Code workspace</Link>

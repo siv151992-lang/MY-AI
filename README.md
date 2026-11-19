@@ -9,6 +9,7 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 │                 AI panel with approval cards and per-turn undo                 │
 │ Deep research: live progress · cited report · sources · claims · MD/PDF export │
 │ Documents: library · ask (RAG) · compare · extract · tables · generate · share │
+│ Agent team: live agent roster · task graph · conflicts · verification          │
 └──────────────┬─────────────────────────────────────────────────────────────────┘
                │ same-origin /api/* (httpOnly session cookie, SSE streaming)
 ┌──────────────▼──────────────── FastAPI backend ────────────────────────────────┐
@@ -25,6 +26,8 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 │                                      claims → cross-check → verify → report    │
 │   Documents          documents/      extract + OCR → chunks/tables → hybrid    │
 │                                      RAG; access checks on every read          │
+│   Agent team         team/           plan → parallel specialists → reconcile   │
+│                                      conflicts → synthesize → verify           │
 │   Tool engine        tools/base.py   typed registry, timeouts, errors → model  │
 │   Research engine    tools/web.py    web_search (Tavily/Brave) + fetch_url     │
 │   Coding engine      tools/code.py   run_python in the isolated sandbox        │
@@ -39,7 +42,8 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 │ settings, audit) · conversation_segments ·   │  │ of a project (python, pytest,  │
 │ workspaces · workspace_activity · agent_* ·  │
 │ research_runs/sources/claims/events ·        │
-│ document_tables · document_access            │  │ node, npm, git, make)          │
+│ document_tables · document_access ·          │
+│ team_runs/tasks/events                       │  │ node, npm, git, make)          │
 └──────────────────────────────────────────────┘  │ no internet, read-only FS, non-│
   workspaces volume: one git repo per project      │ root, rlimits, timeouts, token │
                                                    └────────────────────────────────┘
@@ -286,6 +290,40 @@ Legacy `.doc`, `.xls` and `.ppt` files and ZIP archives are rejected with a mess
 - **Storage.** Files are stored under the owner's directory with random names. Downloads are sent as attachments with `nosniff` and a sandbox CSP; only images and PDFs display inline, so uploaded HTML or SVG can never run on Aria's origin.
 - **What leaves the server.** OCR runs locally. Document text goes to your configured model or embedding provider only when you use a feature that needs it (summaries, questions, comparison, extraction, analysis, generation, embeddings).
 
+## Multi-agent orchestration
+
+Open **Agent team** in the sidebar (`/team`), describe a goal, and a team of specialist agents works on it. The code is in `backend/app/team/`.
+
+| Agent | Tools | Role |
+|---|---|---|
+| Planning | (model only) | Breaks the goal into 1–8 tasks, assigns each to an agent and declares dependencies. |
+| Research | `web_search`, `fetch_url`, `search_documents`, `list_documents` | Finds and reads sources and returns findings attributed to them. |
+| Coding | `run_python` | Writes code, runs it in the sandbox, debugs it. |
+| Data Analyst | `analyze_table`, `read_document`, `search_documents`, `list_documents`, `run_python` | Computes figures with pandas over the user's spreadsheets or the data it is given. |
+| Writing | `generate_document`, `search_documents`, `read_document` | Writes the prose deliverable and can create DOCX/PDF/XLSX/PPTX/MD files. |
+| Browser | `open_page`, `read_page`, `find_in_page`, `follow_link` | Navigates specific sites like a person: reads pages, searches in them, follows links. Every hop is SSRF-guarded. |
+| Verification | `web_search`, `fetch_url`, `run_python`, `search_documents`, `read_document` | Settles conflicts between agents and checks the final answer independently. |
+
+**How a run works** (`orchestrator.py`):
+
+1. **Plan.** The Planning Agent sees the roster, including which tools aren't configured on this server, and returns a task graph. It is validated: unknown agents and dependencies are dropped, cycles are broken, and every adjustment is shown to you.
+2. **Delegate.** Each task starts as soon as its dependencies finish, and receives their results as input.
+   - **Parallel when safe:** tasks for agents without side effects run concurrently, up to 3 at a time. An agent that creates files (Writing) runs alone.
+   - **Retries:** a failed task is retried once with the error. If it still fails, tasks that depend on it are told what is missing.
+3. **Each specialist** runs its own tool loop and must finish by calling `submit_result` (status, result, sources, confidence, notes), with code-level checks:
+   - **No evidence, no "done":** Research, Data Analyst and Browser can't report done without at least one successful tool call. They are told once; after that the result is downgraded to *partial*.
+   - **Sources must be real:** a listed source that doesn't appear in the agent's own tool results is removed, and the removal is shown.
+4. **Reconcile.** The results are compared for contradictions. Factual or numeric conflicts go to the **Verification Agent**, which checks them with its tools; up to 3 are checked in parallel. A conflict counts as *resolved* only if the agent actually used a tool; otherwise both positions are reported as *unresolved*.
+5. **Synthesize.** The orchestrator combines the results using only what the agents produced. It applies the conflict resolutions and discloses failed or partial tasks.
+6. **Verify.** The Verification Agent checks the final answer against the agents' results and re-checks key facts and numbers with tools, then calls `submit_verdict` (`ok`, `issues`, `checked`). If it finds issues, the answer is revised once and checked again. The run ends **completed** or **completed with issues**, and the remaining issues are shown.
+
+**What you see.** A roster card for each agent shows whether it's idle or working, and on which task. Tasks are laid out in dependency columns (tasks in a column can run in parallel); each card shows live tool activity, the result, sources, confidence, notes and attempts. There's also a conflicts panel with the resolutions, the verification verdict with what was checked, and the final answer, which you can export as Markdown. Progress events are stored, so you can reload or come back later.
+
+**Limits.**
+- **No external actions.** Agents act only through the tools above. Actions with outside effects (email, Slack, HTTP writes) belong to the **Autonomous agent**, which asks for your approval.
+- **Single process.** Runs execute inside the backend process (2 at a time per user), and unfinished runs are marked failed after a restart.
+- **Conflict checks are capped.** At most 3 conflicts are checked with tools per run; any others are reported as unresolved.
+
 ## Quick start (Docker)
 
 You need Docker Desktop (Windows or macOS) or Docker Engine (Linux).
@@ -348,7 +386,7 @@ cd frontend && npm install && npm run dev        # http://localhost:3000, proxie
 ## Tests
 
 ```bash
-cd backend && pytest            # 142 tests (incl. 10 autonomous-run scenarios: approval granted/denied,
+cd backend && pytest            # 156 tests (incl. 10 autonomous-run scenarios: approval granted/denied,
                                 # grounding guard, retry, re-plan, remediation, cancel, report): stream parsers (incl. thinking blocks), agent loop, reasoning
                                 # engine (analyzer, clarifier, planner, verifier, state, scratchpad privacy),
                                 # memory (privacy rules, scoring, rank fusion, extraction, compaction),
@@ -356,12 +394,13 @@ cd backend && pytest            # 142 tests (incl. 10 autonomous-run scenarios: 
                                 # approvals, code search), deep research (quote verification, citation
                                 # validation, conflicts, source selection, report, PDF), documents (every
                                 # format, OCR, chunk locations, profiling, generation, citations, access
-                                # control between users), tools, SSRF guard,
+                                # control between users), agent team (plan validation, parallel scheduling,
+                                # side-effect isolation, grounding, conflicts, verification), tools, SSRF guard,
                                 # chunking, PDF extraction, sandbox
 # Integration tests against real PostgreSQL + pgvector (load db/init/01-schema.sh into an
 # empty database first; skipped unless the URL is set):
-TEST_DATABASE_URL=postgresql://postgres@localhost:5432/aria_test pytest tests/test_memory_pg.py tests/test_workspace_pg.py tests/test_research_pg.py tests/test_documents_pg.py
-cd frontend && npm test         # SSE and diff parsers, citation linking
+TEST_DATABASE_URL=postgresql://postgres@localhost:5432/aria_test pytest tests/test_memory_pg.py tests/test_workspace_pg.py tests/test_research_pg.py tests/test_documents_pg.py tests/test_team_pg.py
+cd frontend && npm test         # SSE and diff parsers, citation linking, team waves/agent state
 ```
 
 The orchestrator tests use a scripted provider *in the test suite only*, so plan → tool → verify → revise can be checked deterministically. The application itself always calls real APIs.
