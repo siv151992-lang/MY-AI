@@ -355,7 +355,8 @@ class AutomationIn(BaseModel):
 
 
 def _hook_url(request: Request, aid, token: str) -> str:
-    return f"{str(request.base_url).rstrip('/')}/api/hooks/{aid}/{token}"
+    """Path only: the backend sits behind the web app's proxy, so the browser adds the public origin it uses."""
+    return f"/api/hooks/{aid}/{token}"
 
 
 @router.get("/automations")

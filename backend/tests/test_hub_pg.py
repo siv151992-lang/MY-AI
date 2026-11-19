@@ -241,8 +241,8 @@ def test_integrations_automations_webhooks_and_tasks(env):
     # webhook trigger: secret URL works once known, wrong token is 404
     hook = c.post("/api/automations", json={"name": "On event", "trigger_type": "webhook", "steps": [
         {"type": "prompt", "instructions": "Event: {{payload.kind}}"}]}, headers=H).json()
-    url = hook["webhook_url"]
-    path = url.split("://", 1)[1].split("/", 1)[1]
+    assert hook["webhook_url"].startswith("/api/hooks/")
+    path = hook["webhook_url"].lstrip("/")
     assert c.post(f"/{path[:-3]}xyz", json={"kind": "x"}).status_code == 404
     r = c.post(f"/{path}", json={"kind": "signup"})  # no CSRF header: called by other services
     assert r.status_code == 200, r.text

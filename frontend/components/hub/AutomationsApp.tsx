@@ -133,7 +133,7 @@ function Editor({ id }: { id: string | null }) {
     try {
       const body = { name: a.name, enabled: a.enabled, trigger_type: a.trigger_type, schedule: a.schedule, timezone: a.timezone, steps: a.steps, project_id: a.project_id ?? null };
       const res = await api<Automation>(id ? `/api/automations/${id}` : "/api/automations", { method: id ? "PUT" : "POST", body });
-      if (res.webhook_url) setHookUrl(res.webhook_url);
+      if (res.webhook_url) setHookUrl(window.location.origin + res.webhook_url);
       if (!id) router.replace(`/automations/${res.id}`); else load();
     } catch (e: any) { setError(e.message); } finally { setSaving(false); }
   }
@@ -167,7 +167,7 @@ function Editor({ id }: { id: string | null }) {
           )}
           {a.trigger_type === "webhook" && (
             <p className="text-xs text-muted-foreground">POST JSON to the secret URL (shown once after saving) to start a run. The body is available as {"{{payload}}"} and fields as {"{{payload.field}}"}.
-              {id && a.has_webhook && <> <button className="text-brand underline" onClick={() => api<{ webhook_url: string }>(`/api/automations/${id}/webhook`, { method: "POST" }).then((r) => setHookUrl(r.webhook_url))}>Create a new URL</button> (the old one stops working).</>}</p>
+              {id && a.has_webhook && <> <button className="text-brand underline" onClick={() => api<{ webhook_url: string }>(`/api/automations/${id}/webhook`, { method: "POST" }).then((r) => setHookUrl(window.location.origin + r.webhook_url))}>Create a new URL</button> (the old one stops working).</>}</p>
           )}
           {hookUrl && (
             <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs">
