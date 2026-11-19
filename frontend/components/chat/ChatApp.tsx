@@ -7,6 +7,7 @@ import type { ChatMessage, Conversation, FileRef, ModelInfo, ServerMessage, User
 import { cn, uid } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Composer } from "./Composer";
+import { ConnectModel } from "./ConnectModel";
 import { MemoryDialog } from "./MemoryDialog";
 import { EmptyState, MessageView } from "./MessageView";
 import { Sidebar } from "./Sidebar";
@@ -40,6 +41,7 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
   const [memoryTab, setMemoryTab] = useState<"active" | "pending" | "chat">("active");
   const openMemory = (tab: "active" | "pending" | "chat" = "active") => { setMemoryTab(tab); setMemoryOpen(true); };
   const [banner, setBanner] = useState<string | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
   const [prefill, setPrefill] = useState<{ text: string; n: number }>();
   const [atBottom, setAtBottom] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
@@ -63,12 +65,19 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
           ? localStorage.getItem("aria.model") : ms.default;
         setModelId((cur) => cur ?? defaultModel.current);
         setConversations(convs);
-        if (!ms.models.length) setBanner("No AI provider is configured on the server. Add an API key to the backend .env file.");
+        if (!ms.models.length) setSetupOpen(true);
       } catch (e: any) {
         if (e.status !== 401) setBanner(e.message || "Could not reach the server.");
       }
     })();
   }, []);
+
+  const reloadModels = async () => {
+    const ms = await api<{ default: string | null; models: ModelInfo[] }>("/api/models");
+    setModels(ms.models);
+    defaultModel.current = ms.default;
+    setModelId((cur) => (cur && ms.models.some((m) => m.id === cur) ? cur : ms.default));
+  };
 
   const loadConversation = useCallback(async (id: string | null) => {
     abortRef.current?.abort();
@@ -269,6 +278,7 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
           <div className="flex flex-1 flex-col items-center justify-center px-4">
             <div className="w-full max-w-3xl space-y-6">
               <EmptyState name={user?.name ?? ""} onPick={(s) => setPrefill({ text: s, n: Date.now() })} />
+              {setupOpen && <ConnectModel onConnected={() => reloadModels().catch(() => {})} onClose={() => setSetupOpen(false)} />}
               {composer}
             </div>
           </div>

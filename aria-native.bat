@@ -190,24 +190,9 @@ if errorlevel 1 (
 set "PGPASSWORD="
 for /f "usebackq delims=" %%P in ("%DATA%\pw.tmp") do set "PGPASSWORD=%%P"
 
-rem --- AI provider key ---------------------------------------------------------------
-call :check_provider
-if not defined HAS_PROVIDER (
-  echo.
-  echo [!] Aria needs an AI model. Notepad will now open your settings file:
-  echo       - paste your key after ANTHROPIC_API_KEY=  or  OPENAI_API_KEY=
-  echo       - or, for free local models with Ollama, delete the "# " before OLLAMA_BASE_URL
-  echo       Optional: TAVILY_API_KEY or BRAVE_API_KEY turns on web search and Deep research.
-  echo.
-  start "" notepad ".env"
-  echo     When you have saved the file in Notepad, come back to this window and
-  pause
-  call :check_provider
-)
-if not defined HAS_PROVIDER (
-  echo [!] Still no AI key. Aria will start, but chat won't work until you add one to
-  echo     "%ROOT%\.env" and run this file again.
-)
+rem --- AI model: connected inside Aria ------------------------------------------
+rem Nothing to do here. When no model is connected yet, Aria's chat screen shows a box
+rem where you paste your API key; it is checked and saved by Aria itself.
 
 rem --- Database ------------------------------------------------------------------------
 if not exist "%DATA%\pgdata\PG_VERSION" (
@@ -260,6 +245,7 @@ if errorlevel 1 (
 call :shortcut
 echo.
 echo [OK] Aria is running at %URL%  - without Docker.
+echo     First time? Create your account, then paste your AI key on the chat screen.
 echo      Code execution is off and search uses keywords in this mode.
 echo      Three minimized windows keep it running: "Aria database", "Aria backend", "Aria web".
 echo      To stop it: run "aria-native.bat stop" in "%ROOT%".
@@ -306,13 +292,6 @@ if errorlevel 1 (
   echo     Check your internet connection and try again.
   exit /b 1
 )
-exit /b 0
-
-:check_provider
-set "HAS_PROVIDER="
-findstr /r /c:"^ANTHROPIC_API_KEY=." ".env" >nul && set "HAS_PROVIDER=1"
-findstr /r /c:"^OPENAI_API_KEY=." ".env" >nul && set "HAS_PROVIDER=1"
-findstr /r /c:"^OLLAMA_BASE_URL=." ".env" >nul && set "HAS_PROVIDER=1"
 exit /b 0
 
 :shortcut

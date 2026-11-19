@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from . import db
 from .config import get_settings
 from .llm import registry
-from .routers import agent, auth, conversations, documents, files, memory, research, team, workspaces
+from .routers import agent, auth, conversations, documents, files, memory, research, setup, team, workspaces
 from .security import csrf_guard
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -26,6 +26,8 @@ async def lifespan(app: FastAPI):
     s.workspace_root.mkdir(parents=True, exist_ok=True)
     await db.connect(s.database_url)
     await db.migrate(s.embedding_dim, s.disable_pgvector)
+    from .setup import load as load_app_settings
+    await load_app_settings()
     if not db.VECTOR_ENABLED:
         log.warning("pgvector is not installed: semantic search is off, using full-text search only.")
     if not s.sandbox_url:
@@ -41,7 +43,7 @@ async def lifespan(app: FastAPI):
     maintenance = asyncio.create_task(maintenance_loop())
     log.info("Providers: %s | models: %s", list(registry.providers()), [m.id for m in models])
     if not models:
-        log.warning("No LLM provider configured — chat will return 503 until you set an API key.")
+        log.warning("No LLM provider configured yet: open Aria and paste an API key on the chat screen.")
     yield
     maintenance.cancel()
     await db.close()
@@ -52,7 +54,7 @@ app.add_middleware(CORSMiddleware, allow_origins=get_settings().cors_origin_list
                    allow_methods=["*"], allow_headers=["*"])
 
 for r in (auth.router, conversations.router, files.router, memory.router, memory.conversation_router, agent.router,
-          workspaces.router, research.router, documents.router, team.router):
+          workspaces.router, research.router, documents.router, team.router, setup.router):
     app.include_router(r)
 
 

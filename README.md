@@ -358,14 +358,16 @@ The backend runs in this mode on any OS. It falls back automatically when pgvect
 
 You need Docker Desktop (Windows or macOS) or Docker Engine (Linux).
 
-**Windows, one click:** download `aria.bat` and double-click it from anywhere. If it isn't inside the project folder it downloads Aria into `%USERPROFILE%\Aria`, starts Docker Desktop if needed, creates `.env` with random secrets, opens it in Notepad for your model API key, starts everything, opens the browser and adds an **Aria** shortcut to your Desktop. `aria.bat stop`, `logs`, `status` and `update` (downloads the latest code, keeping your `.env`) cover the rest.
+**Windows, one click:** download `aria.bat` and double-click it from anywhere. If it isn't inside the project folder it downloads Aria into `%USERPROFILE%\Aria`, starts Docker Desktop if needed, creates `.env` with random secrets, starts everything, opens the browser and adds an **Aria** shortcut to your Desktop. `aria.bat stop`, `logs`, `status` and `update` (downloads the latest code, keeping your `.env`) cover the rest.
 
 ```bash
 cp .env.example .env
 # edit .env: set JWT_SECRET and SANDBOX_TOKEN to long random strings,
-#            and add at least one of ANTHROPIC_API_KEY / OPENAI_API_KEY / OLLAMA_BASE_URL
+#            (model keys are optional here: you can paste one in the app instead, see below)
 docker compose up --build
 ```
+
+**Connecting a model from the chat screen.** When no model is connected, the chat screen shows a *Connect an AI model* box. Paste an Anthropic key (`sk-ant-…`), an OpenAI key (`sk-…`) or type `ollama`. Aria checks the key with the provider using a free, read-only request, saves it in its own database (table `app_settings`) and starts using it right away; the default models switch to match. A second step offers an optional Tavily key (`tvly-…`) for web search and Deep research. Only the first account created on the installation can change keys, keys are never shown again in full, and settings saved in the app take precedence over `.env`.
 
 Then open **http://localhost:3000**, create an account and start chatting.
 
@@ -398,7 +400,7 @@ Model IDs change over time. If a provider rejects a model name, update `backend/
 
 ## Security
 
-- API keys live only in the backend environment, and the browser talks to the backend through a same-origin proxy.
+- API keys live only on the server (`.env`, or the `app_settings` table when pasted in the app; only the first account may set them), and the browser talks to the backend through a same-origin proxy. Once saved, a key is never sent back to the browser in full.
 - Passwords are hashed with bcrypt. Sessions are HS256 JWTs in **httpOnly, SameSite=Lax** cookies (`COOKIE_SECURE=true` behind HTTPS), and every state-changing request needs a CSRF header.
 - Every database query is scoped by `user_id`. Uploads are stored under random IDs (never the client's filename), with file types detected from magic bytes and a size limit.
 - `fetch_url` blocks private, loopback and metadata IPs on every redirect hop (SSRF protection).

@@ -217,13 +217,14 @@ async def migrate(embedding_dim: int = 1536, disable_pgvector: bool = False) -> 
     from .documents.store import MIGRATIONS as DOCUMENT_MIGRATIONS  # 007 — document intelligence
     from .memory.store import MIGRATIONS as MEMORY_MIGRATIONS  # 004 — advanced memory
     from .research.store import MIGRATIONS as RESEARCH_MIGRATIONS  # 006 — deep research
+    from .setup import MIGRATIONS as SETUP_MIGRATIONS  # 009 — settings entered in the app
     from .schema import BASE  # 001 — base tables (previously created by db/init/01-schema.sh)
     from .team.store import MIGRATIONS as TEAM_MIGRATIONS  # 008 — multi-agent orchestration
     from .workspace.store import MIGRATIONS as WORKSPACE_MIGRATIONS  # 005 — coding workspaces
     async with pool().acquire() as c:
         vector = await ensure_extensions(c, disable_pgvector)
         for stmt in (BASE + MIGRATIONS + MEMORY_MIGRATIONS + WORKSPACE_MIGRATIONS + RESEARCH_MIGRATIONS
-                     + DOCUMENT_MIGRATIONS + TEAM_MIGRATIONS):
+                     + DOCUMENT_MIGRATIONS + TEAM_MIGRATIONS + SETUP_MIGRATIONS):
             sql = _for_mode(stmt, embedding_dim, vector)
             if sql:
                 await c.execute(sql)
