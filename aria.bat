@@ -18,7 +18,7 @@ rem    aria.bat status   show the running containers
 rem    aria.bat update   download the latest version (keeps your .env), rebuild, start
 rem ===========================================================================
 set "REPO_ZIP=https://github.com/siv151992-lang/MY-AI/archive/refs/heads"
-set "BRANCH=claude/wonderful-darwin-52ztwt"
+set "BRANCH=main"
 set "URL=http://localhost:3000"
 set "CMD=%~1"
 
@@ -41,7 +41,7 @@ if exist "%DL%" rmdir /s /q "%DL%"
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference = 'Stop'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;" ^
   "New-Item -ItemType Directory -Force '%DL%' | Out-Null; $zip = Join-Path '%DL%' 'aria.zip';" ^
-  "try { Invoke-WebRequest -UseBasicParsing '%REPO_ZIP%/%BRANCH%.zip' -OutFile $zip } catch { Write-Host '    (feature branch not found, using main)'; Invoke-WebRequest -UseBasicParsing '%REPO_ZIP%/main.zip' -OutFile $zip };" ^
+  "Invoke-WebRequest -UseBasicParsing '%REPO_ZIP%/%BRANCH%.zip' -OutFile $zip;" ^
   "Expand-Archive -Path $zip -DestinationPath (Join-Path '%DL%' 'src') -Force"
 if errorlevel 1 (
   echo [X] Download failed. Check your internet connection and try again.
