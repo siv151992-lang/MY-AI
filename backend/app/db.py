@@ -79,7 +79,7 @@ async def get_user(user_id: str) -> dict | None:
 async def list_conversations(user_id: str, limit: int = 200) -> list[dict]:
     return rows(await pool().fetch(
         "SELECT id, title, model_id, created_at, updated_at FROM conversations "
-        "WHERE user_id=$1 ORDER BY updated_at DESC LIMIT $2", user_id, limit))
+        "WHERE user_id=$1 AND workspace_id IS NULL ORDER BY updated_at DESC LIMIT $2", user_id, limit))
 
 
 async def create_conversation(user_id: str, model_id: str | None) -> dict:
@@ -178,8 +178,9 @@ MIGRATIONS = [
 
 async def migrate(embedding_dim: int = 1536) -> None:
     from .memory.store import MIGRATIONS as MEMORY_MIGRATIONS  # 004 — advanced memory
+    from .workspace.store import MIGRATIONS as WORKSPACE_MIGRATIONS  # 005 — coding workspaces
     async with pool().acquire() as c:
-        for stmt in MIGRATIONS + MEMORY_MIGRATIONS:
+        for stmt in MIGRATIONS + MEMORY_MIGRATIONS + WORKSPACE_MIGRATIONS:
             await c.execute(stmt.replace("{DIM}", str(int(embedding_dim))))
 
 

@@ -80,8 +80,46 @@ async def _title(user_id: str, conv_id: str, user_text: str) -> str | None:
         return None
 
 
+async def merge_events(agen: AsyncIterator[dict], queue: asyncio.Queue | None) -> AsyncIterator[dict]:
+    """Interleave an agent's event stream with side events pushed by tools while they run
+    (approval requests, file changes), so the client sees them without waiting for the tool to return."""
+    if queue is None:
+        async for ev in agen:
+            yield ev
+        return
+    nxt = asyncio.ensure_future(agen.__anext__())
+    getq = asyncio.ensure_future(queue.get())
+    try:
+        while True:
+            done, _ = await asyncio.wait({nxt, getq}, return_when=asyncio.FIRST_COMPLETED)
+            if getq in done:
+                yield getq.result()
+                getq = asyncio.ensure_future(queue.get())
+            if nxt in done:
+                try:
+                    ev = nxt.result()
+                except StopAsyncIteration:
+                    break
+                yield ev
+                nxt = asyncio.ensure_future(agen.__anext__())
+        while not queue.empty():
+            yield queue.get_nowait()
+    finally:
+        getq.cancel()
+        if not nxt.done():
+            nxt.cancel()
+            try:
+                await nxt
+            except BaseException:  # noqa: BLE001 - cancelled or finished with an error; either way we are closing
+                pass
+        await agen.aclose()
+
+
 async def respond(*, user: dict, conv: dict, text: str, file_ids: list[str], model_id: str | None,
-                  agent_mode: bool, regenerate: bool) -> AsyncIterator[dict]:
+                  agent_mode: bool, regenerate: bool, tools: ToolRegistry | None = None,
+                  extra_system: list[str] | None = None, side_events: asyncio.Queue | None = None,
+                  max_steps: int | None = None, extra_meta: dict | None = None) -> AsyncIterator[dict]:
+    """One chat turn. The coding workspace passes its own tools, prompt sections and a side-event queue."""
     s = get_settings()
     spec = registry.get_model(model_id or conv.get("model_id"))
     llm = registry.provider_for(spec)
@@ -112,7 +150,7 @@ async def respond(*, user: dict, conv: dict, text: str, file_ids: list[str], mod
     mem_public = recall.public()
     if mem_public["memories"] or mem_public["recalled"] or compacted:
         yield {"type": "memory_context", **mem_public, "compacted": compacted}
-    tools = build_tools()
+    tools = tools or build_tools()
     state = conv.get("state") or {}
     state_text = render_state(state)
     last_asked = bool(prior and prior[-1]["role"] == "assistant" and (prior[-1].get("meta") or {}).get("clarification"))
@@ -121,20 +159,21 @@ async def respond(*, user: dict, conv: dict, text: str, file_ids: list[str], mod
         return build_system_prompt(user_name=user.get("name", ""), memories=recall.memories,
                                    recalled=recall.recalled, conversation_summary=summary,
                                    conversation_state=state_text, documents=docs, reasoning_guidance=guidance,
-                                   tool_names=tools.names() if spec.tools else [])
+                                   tool_names=tools.names() if spec.tools else [], extra_sections=extra_system)
 
     engine = ReasoningEngine.default(registry.provider_for(uspec), uspec.model)
     cfg = AgentConfig(model=spec.model, max_tokens=spec.max_tokens, reasoning_mode=spec.reasoning,
-                      use_tools=spec.tools, max_steps=s.max_agent_steps, max_revisions=s.max_revisions,
+                      use_tools=spec.tools, max_steps=max_steps or s.max_agent_steps, max_revisions=s.max_revisions,
                       agent_mode=agent_mode, has_documents=bool(docs))
     ctx = ToolContext(user_id=user["id"], conversation_id=conv["id"], file_ids=file_ids)
 
     final = None
     partial = ""
     try:
-        async for ev in run_agent(llm=llm, engine=engine, cfg=cfg, build_system=build_system, history=history,
-                                  user_message=user_msg, tools=tools, ctx=ctx, state_text=state_text,
-                                  last_assistant_asked=last_asked):
+        async for ev in merge_events(run_agent(llm=llm, engine=engine, cfg=cfg, build_system=build_system,
+                                               history=history, user_message=user_msg, tools=tools, ctx=ctx,
+                                               state_text=state_text, last_assistant_asked=last_asked),
+                                     side_events):
             if ev["type"] == "token":
                 partial += ev["text"]
             elif ev["type"] == "reset":
@@ -147,13 +186,14 @@ async def respond(*, user: dict, conv: dict, text: str, file_ids: list[str], mod
         if final is None and partial.strip():
             # Client pressed stop / disconnected, or the provider failed mid-answer: keep what was produced.
             _spawn(db.add_message(conv["id"], "assistant", partial, [],
-                                  {"interrupted": True, "model": spec.id}))
+                                  {"interrupted": True, "model": spec.id, **(extra_meta or {})}))
 
     if final is None or not final["content"].strip():
         if final is not None:
             yield {"type": "error", "message": "The model returned an empty response. Try again or switch models."}
         return
     final["meta"]["model"] = spec.id
+    final["meta"].update(extra_meta or {})
     final["meta"]["memory"] = {"ids": [m["id"] for m in recall.memories], "recalled": len(recall.recalled),
                                "compacted": compacted}  # ids only: deleting a memory leaves no copy behind
     msg = await db.add_message(conv["id"], "assistant", final["content"], [], final["meta"])

@@ -33,7 +33,8 @@ def _memory_line(m) -> str:
 
 def build_system_prompt(*, user_name: str, memories: list, conversation_summary: str | None,
                         conversation_state: str, documents: list[dict], reasoning_guidance: str,
-                        tool_names: list[str], recalled: list[dict] | None = None) -> str:
+                        tool_names: list[str], recalled: list[dict] | None = None,
+                        extra_sections: list[str] | None = None) -> str:
     parts = [CORE.format(date=datetime.now(timezone.utc).strftime("%A, %d %B %Y"))]
     if user_name:
         parts.append(f"The user's name is {user_name}.")
@@ -59,6 +60,7 @@ def build_system_prompt(*, user_name: str, memories: list, conversation_summary:
                 doc_txt.append(f'<document name="{d["filename"]}" note="large file: use search_documents to read relevant parts">\n'
                                f'{d.get("excerpt", "")}\n</document>')
         parts.append("The user attached these files:\n" + "\n".join(doc_txt))
+    parts.extend(x for x in (extra_sections or []) if x)
     if tool_names:
         parts.append("Available tools: " + ", ".join(tool_names) + ".")
     if reasoning_guidance:

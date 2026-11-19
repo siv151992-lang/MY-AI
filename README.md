@@ -4,7 +4,9 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 
 ```
 ┌──────────── Browser (Next.js 15 · React 19 · Tailwind · shadcn/ui) ────────────┐
-│ Sidebar/history · Markdown + code highlight · uploads · model picker · themes │
+│ Chat: history · Markdown · uploads · model picker · memory panel · themes      │
+│ Code workspace: file explorer · CodeMirror editor · terminal · diffs · git ·   │
+│                 AI panel with approval cards and per-turn undo                 │
 └──────────────┬─────────────────────────────────────────────────────────────────┘
                │ same-origin /api/* (httpOnly session cookie, SSE streaming)
 ┌──────────────▼──────────────── FastAPI backend ────────────────────────────────┐
@@ -15,6 +17,8 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 │   Memory system      memory/         tiered: working window → state → rolling  │
 │                                      summary → episodic segments → long-term   │
 │                                      memories (pgvector, user-approved)        │
+│   Coding workspace   workspace/      git-backed projects, code tools, approval │
+│                                      gate, checkpoints, sandboxed commands     │
 │   Tool engine        tools/base.py   typed registry, timeouts, errors → model  │
 │   Research engine    tools/web.py    web_search (Tavily/Brave) + fetch_url     │
 │   Coding engine      tools/code.py   run_python in the isolated sandbox        │
@@ -23,12 +27,14 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 │ LLM layer: Anthropic + OpenAI-compatible (OpenAI, Ollama, Groq, OpenRouter…)   │
 └───────┬─────────────────────────────────────────────┬──────────────────────────┘
         │                                             │ internal network only
-┌───────▼────────── PostgreSQL 16 + pgvector ──┐  ┌───▼──── Python sandbox ────────┐
-│ users · conversations · messages · files ·   │  │ no internet, read-only FS, non- │
-│ document_chunks · memories · memory_revisions│
-│ memory_settings · memory_audit ·             │
-│ conversation_segments (vector, tsv)          │  │ root, rlimits, timeouts, token  │
-└──────────────────────────────────────────────┘  └────────────────────────────────┘
+┌───────▼────────── PostgreSQL 16 + pgvector ──┐  ┌───▼──── Sandbox ───────────────┐
+│ users · conversations · messages · files ·   │  │ /run  Python snippets          │
+│ document_chunks · memories (+revisions,      │  │ /exec shell commands on a copy │
+│ settings, audit) · conversation_segments ·   │  │ of a project (python, pytest,  │
+│ workspaces · workspace_activity · agent_*    │  │ node, npm, git, make)          │
+└──────────────────────────────────────────────┘  │ no internet, read-only FS, non-│
+  workspaces volume: one git repo per project      │ root, rlimits, timeouts, token │
+                                                   └────────────────────────────────┘
 ```
 
 ## Reasoning engine
@@ -142,6 +148,53 @@ Secrets (passwords, API keys and tokens, Luhn-valid card numbers, SSNs, IBANs, p
 
 A maintenance task runs every 6 hours. It expires stale suggestions, applies retention, and backfills embeddings for memories saved while the embedding provider was down. Without `EMBEDDING_PROVIDER`, everything still works using full-text search.
 
+## Coding workspace
+
+Open **Code workspace** in the sidebar (`/code`). Each workspace is a real project, stored as a git repository on the `workspaces` volume. You can start one blank, clone it from a public HTTPS git URL, or upload a `.zip`.
+
+The screen has four parts:
+
+- **File explorer:** create, rename, move and delete files and folders. Files with uncommitted changes are coloured by their git status.
+- **Editor:** CodeMirror with syntax highlighting for most languages. Save with Ctrl/⌘+S. Before saving, it checks the file hasn't been changed underneath you (for example by the AI), so it never silently overwrites.
+- **Terminal:** runs commands in the sandbox (details below).
+- **AI panel:** a chat that works on the project. The open file and any selected lines are sent along as context.
+
+The side bar also has **Search** (text, regex, or a natural-language query that ranks files) and **Source control** (changed files with diffs, discard, commit, branches, history, remote, push).
+
+**What the AI can do** (`backend/app/workspace/tools.py`):
+
+| Capability | Tools |
+|---|---|
+| Read and understand the codebase | `repo_map` (every file with its top-level functions and classes, also put into the prompt), `list_files`, `read_file`, `search_code` (literal, regex, or a natural-language query ranked with BM25 over code, paths and symbol names) |
+| Generate and edit across many files | `write_files` (scaffold a whole application in one call), `write_file`, `edit_file` (exact search-and-replace that must match exactly once, so edits stay small and reviewable), `move_path` |
+| Debug and run tests | `run_command`, `run_tests` (detects pytest, `npm test`, `node --test`, `go test`, `cargo test` or `make test`) |
+| Git | `git_status`, `git_diff`, `git_log`, `git_commit` |
+| Delete | `delete_path` |
+
+The coding prompt has the AI work like an engineer: read before changing, make focused edits, run the tests, fix the failures it sees, then summarise what changed and how it was verified. Explaining code, refactoring and writing documentation are ordinary requests to the same agent. Quick-start buttons in the AI panel cover the common ones.
+
+**Approvals and undo.**
+
+| Action | What happens |
+|---|---|
+| The AI creates or edits files | Applied straight away and shown live: the explorer refreshes and open tabs reload. |
+| The AI deletes files, commits, or runs a command that deletes files | Pauses at an approval card showing the exact files, or the commit message and diffstat. Nothing happens until you click Approve. If you deny it, or don't answer within `WORKSPACE_APPROVAL_TIMEOUT_MIN` minutes, the AI is told to carry on without it. |
+| Push (publishing) | The AI has no push tool. You push from Source control after a confirmation dialog. The access token is used for that one push via an environment-only HTTP header and is never written to disk. |
+| You delete, discard changes, restore a checkpoint or delete a workspace in the UI | Asks you to confirm first. The API enforces this too: these endpoints return `428` unless `confirm: true` is sent. |
+| Any AI turn | A **checkpoint** of the whole working tree (untracked files included) is taken before it starts, as a private git ref, without touching your index or branch. Afterwards the turn shows which files changed, with **Review** (diff) and **Undo** (restore the checkpoint; your current state is checkpointed first, so undo can itself be undone). |
+
+**Sandboxed execution** (`sandbox/server.py`, `POST /exec`). Each command, whether typed in the terminal or run by the AI, works like this:
+
+1. The project is sent to the sandbox as a tarball (without `.git`, `node_modules` and build folders).
+2. The command runs on a throwaway copy under `bash`, with no network, a read-only root filesystem, a non-root user, CPU, file-size and process limits, a timeout, and a scrubbed environment.
+3. The sandbox returns the files the command created, changed or deleted, and the backend applies them.
+
+There is no persistent shell: the terminal remembers `cd` itself, but nothing else carries over between commands except files. The image includes Python 3.12 with pytest, numpy and pandas, plus Node.js/npm (offline), git and make. Dependencies can't be downloaded at run time.
+
+**Git hardening.** The backend runs git with hooks, fsmonitor, external diff and credential helpers disabled. Paths inside `.git` can never be written through the API or the AI. Clone and push are allowed only to public HTTPS hosts that pass the SSRF check.
+
+**Limits.** Files over 2 MB aren't opened in the editor. Projects over 40 MB can't be sent to the sandbox. Imports are capped at `WORKSPACE_IMPORT_MAX_MB`. Approvals are held in the backend process's memory, so run a single backend replica, or move the approval gate to Redis or Postgres before scaling out.
+
 ## Quick start (Docker)
 
 You need Docker Desktop (Windows or macOS) or Docker Engine (Linux).
@@ -204,15 +257,16 @@ cd frontend && npm install && npm run dev        # http://localhost:3000, proxie
 ## Tests
 
 ```bash
-cd backend && pytest            # 86 tests (incl. 10 autonomous-run scenarios: approval granted/denied,
+cd backend && pytest            # 114 tests (incl. 10 autonomous-run scenarios: approval granted/denied,
                                 # grounding guard, retry, re-plan, remediation, cancel, report): stream parsers (incl. thinking blocks), agent loop, reasoning
                                 # engine (analyzer, clarifier, planner, verifier, state, scratchpad privacy),
                                 # memory (privacy rules, scoring, rank fusion, extraction, compaction),
-                                # tools, SSRF guard, chunking, PDF extraction, sandbox
-# Memory integration tests against real PostgreSQL + pgvector (load db/init/01-schema.sh into an
+                                # coding workspace (path safety, edits, git, checkpoints, sandbox commands,
+                                # approvals, code search), tools, SSRF guard, chunking, PDF extraction, sandbox
+# Integration tests against real PostgreSQL + pgvector (load db/init/01-schema.sh into an
 # empty database first; skipped unless the URL is set):
-TEST_DATABASE_URL=postgresql://postgres@localhost:5432/aria_test pytest tests/test_memory_pg.py
-cd frontend && npm test         # SSE parser
+TEST_DATABASE_URL=postgresql://postgres@localhost:5432/aria_test pytest tests/test_memory_pg.py tests/test_workspace_pg.py
+cd frontend && npm test         # SSE and diff parsers
 ```
 
 The orchestrator tests use a scripted provider *in the test suite only*, so plan → tool → verify → revise can be checked deterministically. The application itself always calls real APIs.

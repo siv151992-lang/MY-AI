@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AlertTriangle, ChevronRight, Code2, FileSearch, Globe, ListChecks, Loader2, Search, ShieldCheck,
-  Brain, Wrench, Lightbulb } from "lucide-react";
+  Brain, Trash2, Wrench, Lightbulb } from "lucide-react";
 import type { ChatMessage, ToolRun } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +15,21 @@ const TOOL_META: Record<string, { icon: any; label: (i: any) => string }> = {
   search_memory: { icon: Brain, label: (i) => `Searched memory for “${i.query ?? ""}”` },
   update_memory: { icon: Brain, label: () => "Corrected a memory" },
   forget_memory: { icon: Brain, label: () => "Deleted a memory" },
+  list_files: { icon: FileSearch, label: (i) => `Listed ${i.path || "project"} files` },
+  read_file: { icon: FileSearch, label: (i) => `Read ${i.path}${i.start_line ? ` (from line ${i.start_line})` : ""}` },
+  search_code: { icon: Search, label: (i) => `Searched code for “${i.query ?? ""}”` },
+  repo_map: { icon: FileSearch, label: () => "Mapped the project structure" },
+  write_file: { icon: Code2, label: (i) => `Wrote ${i.path}` },
+  write_files: { icon: Code2, label: (i) => `Wrote ${(i.files ?? []).length} files` },
+  edit_file: { icon: Code2, label: (i) => `Edited ${i.path}` },
+  move_path: { icon: Code2, label: (i) => `Moved ${i.from} → ${i.to}` },
+  delete_path: { icon: Trash2, label: (i) => `Delete ${i.path}` },
+  run_command: { icon: Code2, label: (i) => `Ran \`${String(i.command ?? "").slice(0, 60)}\`` },
+  run_tests: { icon: ShieldCheck, label: (i) => (i.command ? `Ran tests: ${i.command}` : "Ran the tests") },
+  git_status: { icon: ListChecks, label: () => "Checked git status" },
+  git_diff: { icon: ListChecks, label: (i) => `Viewed diff${i.path ? ` of ${i.path}` : ""}` },
+  git_log: { icon: ListChecks, label: () => "Read commit history" },
+  git_commit: { icon: ListChecks, label: (i) => `Commit: ${i.message ?? ""}` },
 };
 
 function safeHost(u: unknown) {

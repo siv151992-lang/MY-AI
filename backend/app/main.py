@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from . import db
 from .config import get_settings
 from .llm import registry
-from .routers import agent, auth, conversations, files, memory
+from .routers import agent, auth, conversations, files, memory, workspaces
 from .security import csrf_guard
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -23,6 +23,7 @@ log = logging.getLogger("aria")
 async def lifespan(app: FastAPI):
     s = get_settings()
     s.upload_dir.mkdir(parents=True, exist_ok=True)
+    s.workspace_root.mkdir(parents=True, exist_ok=True)
     await db.connect(s.database_url)
     await db.migrate(s.embedding_dim)
     from .autonomy.manager import get_manager
@@ -42,7 +43,8 @@ app = FastAPI(title="Aria API", version="1.0.0", lifespan=lifespan, dependencies
 app.add_middleware(CORSMiddleware, allow_origins=get_settings().cors_origin_list, allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
 
-for r in (auth.router, conversations.router, files.router, memory.router, memory.conversation_router, agent.router):
+for r in (auth.router, conversations.router, files.router, memory.router, memory.conversation_router, agent.router,
+          workspaces.router):
     app.include_router(r)
 
 
