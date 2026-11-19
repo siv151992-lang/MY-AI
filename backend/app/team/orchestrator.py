@@ -64,14 +64,30 @@ def _now() -> str:
 class Orchestrator:
     def __init__(self, *, run: dict, user_id: str, llm, model: str, utility_llm, utility_model: str,
                  tool_pool: Callable[[], dict[str, Tool]], publish: Publish, max_parallel: int = 3,
-                 max_calls: int = 12, reasoning: dict | None = None):
+                 max_calls: int = 12, reasoning: dict | None = None, extra_specs: dict | None = None):
         self.run, self.id, self.user_id = run, run["id"], user_id
+        # Custom agents the user created join the built-in specialists (planner sees them; same grounded loop).
+        self.extra_specs = dict(extra_specs or {})
+        self.specs = {**SPECS, **self.extra_specs}
+        self.labels = {**LABEL, **{k: v.label for k, v in self.extra_specs.items()}}
         self.llm, self.model, self.util, self.util_model = llm, model, utility_llm, utility_model
         self.tool_pool, self._publish = tool_pool, publish
         self.max_parallel, self.max_calls, self.reasoning = max_parallel, max_calls, reasoning
         self.tasks: list[Task] = []
         self.conflicts: list[dict] = []
         self.ctx = ToolContext(user_id=user_id, conversation_id=self.id)
+
+    def _capabilities(self, pool) -> str:
+        text = capabilities(pool)
+        for key, spec in self.extra_specs.items():
+            have = [t for t in spec.tools if t in pool]
+            missing = [t for t in spec.tools if t not in pool]
+            line = f"- {key} ({spec.label}): {spec.description}"
+            line += f" [tools: {', '.join(have)}]" if have else " [no tools: works from the task text]"
+            if missing:
+                line += f" [not available here: {', '.join(missing)}]"
+            text += "\n" + line
+        return text
 
     async def emit(self, type_: str, **data) -> None:
         await self._publish(type_, data)
@@ -90,7 +106,7 @@ class Orchestrator:
         await self.delegate()
         if all(t.status == "failed" for t in self.tasks):
             raise RuntimeError("Every task failed, so there is no result to combine: "
-                               + "; ".join(f"{t.id} ({LABEL[t.agent]}): {t.error}" for t in self.tasks)[:1500])
+                               + "; ".join(f"{t.id} ({self.labels[t.agent]}): {t.error}" for t in self.tasks)[:1500])
         await self.reconcile()
         final = await self.synthesize()
         return await self.verify(final)
@@ -100,8 +116,8 @@ class Orchestrator:
         await self.emit("agent_status", agent="planning", state="working", task=None, title="Planning the work")
         pool = self.tool_pool()
         try:
-            reply = await self._complete(PLAN_SYSTEM.format(agents=capabilities(pool)), f"Goal: {self.run['goal']}", max_tokens=2500)
-            self.tasks, warnings = parse_plan(reply, set(DELEGATES))
+            reply = await self._complete(PLAN_SYSTEM.format(agents=self._capabilities(pool)), f"Goal: {self.run['goal']}", max_tokens=2500)
+            self.tasks, warnings = parse_plan(reply, set(DELEGATES) | set(self.extra_specs))
         except (PlanError, ProviderError) as e:
             raise RuntimeError(f"Planning failed: {e}")
         await store.save_tasks(self.id, self.tasks)
@@ -117,18 +133,18 @@ class Orchestrator:
         for d in t.depends_on:
             dep = by_id[d]
             if dep.status == "done" or dep.result:
-                parts.append(f"Input from {d} ({LABEL[dep.agent]}, status {dep.status}):\n{dep.result[:8000]}"
+                parts.append(f"Input from {d} ({self.labels[dep.agent]}, status {dep.status}):\n{dep.result[:8000]}"
                              + (f"\nSources: {', '.join(dep.sources)}" if dep.sources else "")
                              + (f"\nNotes: {dep.notes}" if dep.notes else ""))
             else:
-                parts.append(f"Input from {d} ({LABEL[dep.agent]}) is MISSING: that task failed ({dep.error}). "
+                parts.append(f"Input from {d} ({self.labels[dep.agent]}) is MISSING: that task failed ({dep.error}). "
                              "Work around it if you can and say what is missing.")
         if t.attempts > 1 and t.error:
             parts.append(f"Your previous attempt failed: {t.error}. Try a different approach.")
         return "\n\n".join(parts)
 
     async def _run_task(self, t: Task) -> None:
-        spec = SPECS[t.agent]
+        spec = self.specs[t.agent]
         pool = dict(self.tool_pool())
         if t.agent == "browser":
             pool.update({tool.name: tool for tool in make_browser_tools(BrowserSession())})
@@ -167,7 +183,7 @@ class Orchestrator:
         exclusive = False
         while True:
             for t in ready(self.tasks):
-                spec = SPECS[t.agent]
+                spec = self.specs[t.agent]
                 if t.id in running:
                     continue
                 if spec.side_effects:
@@ -191,7 +207,7 @@ class Orchestrator:
                     task.status, task.error = "failed", f"Internal error: {type(exc).__name__}"
                     await store.update_task(self.id, task)
                     await self.emit("task_status", task=tid, agent=task.agent, status="failed", title=task.title, error=task.error)
-                if SPECS[task.agent].side_effects:
+                if self.specs[task.agent].side_effects:
                     exclusive = False
 
     async def reconcile(self) -> None:
@@ -199,7 +215,7 @@ class Orchestrator:
         if len(results) < 2:
             return
         await self.status("reconciling", "Comparing the agents' results for conflicts")
-        listing = "\n\n".join(f"## {t.id} ({LABEL[t.agent]}): {t.title}\n{t.result[:5000]}" for t in results)
+        listing = "\n\n".join(f"## {t.id} ({self.labels[t.agent]}): {t.title}\n{t.result[:5000]}" for t in results)
         try:
             data = extract_json(await self._complete(CONFLICT_SYSTEM, listing, max_tokens=1500))
         except ProviderError:
@@ -225,13 +241,13 @@ class Orchestrator:
         await self.emit("conflicts", conflicts=self.conflicts)
 
     async def _adjudicate(self, i: int, c: dict) -> None:
-        spec = SPECS["verification"]
+        spec = self.specs["verification"]
         tools = registry_for(spec, self.tool_pool())
         tid = f"C{i + 1}"
         await self.emit("agent_status", agent="verification", state="working", task=tid, title=f"Settling conflict: {c['topic']}")
         by_id = {t.id: t for t in self.tasks}
         prompt = (f"Two or more agents disagree about: {c['topic']}\n\n"
-                  + "\n".join(f"- {p['task']} ({LABEL[by_id[p['task']].agent]}) says: {p['claim']}"
+                  + "\n".join(f"- {p['task']} ({self.labels[by_id[p['task']].agent]}) says: {p['claim']}"
                               + (f" (its sources: {', '.join(by_id[p['task']].sources[:5])})" if by_id[p['task']].sources else "")
                               for p in c["positions"])
                   + "\n\nDetermine which position is correct using your tools (check the sources, recompute numbers). In your "
@@ -250,7 +266,7 @@ class Orchestrator:
     def _material(self) -> str:
         parts = [f"User's goal: {self.run['goal']}"]
         for t in self.tasks:
-            head = f"## {t.id} — {LABEL[t.agent]} — {t.title} [{t.status}{', ' + t.confidence + ' confidence' if t.confidence else ''}]"
+            head = f"## {t.id} — {self.labels[t.agent]} — {t.title} [{t.status}{', ' + t.confidence + ' confidence' if t.confidence else ''}]"
             if t.status == "failed":
                 parts.append(f"{head}\nFAILED: {t.error}" + (f"\nPartial output:\n{t.result[:3000]}" if t.result else ""))
             else:
@@ -277,7 +293,7 @@ class Orchestrator:
         for round_ in (1, 2):
             await self.status("verifying", "Verification Agent is checking the final answer")
             await self.emit("agent_status", agent="verification", state="working", task="final", title="Verifying the final answer")
-            spec = SPECS["verification"]
+            spec = self.specs["verification"]
 
             async def emit(type_: str, data: dict) -> None:
                 await self._publish(type_, {**data, "task": "final", "agent": "verification"})

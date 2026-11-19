@@ -183,7 +183,7 @@ async def respond(*, user: dict, ws_row: dict, conv: dict, text: str, model_id: 
     async for ev in chat.respond(user=user, conv=conv, text=text, file_ids=[], model_id=model_id, agent_mode=False,
                                  regenerate=regenerate, tools=tools, side_events=q,
                                  extra_system=_context_sections(w, ws_row, status, editor),
-                                 max_steps=s.workspace_max_agent_steps, extra_meta={"checkpoint": cp}):
+                                 max_steps=s.workspace_max_agent_steps, extra_meta={"checkpoint": cp}, feature="workspace"):
         yield ev
     try:
         changes = await git.changed_since(w.root, cp)

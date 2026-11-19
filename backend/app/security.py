@@ -49,11 +49,28 @@ async def current_user(request: Request) -> dict:
     user = await db.get_user(payload["sub"])
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+    from .hub import usage
+    usage.set_scope(user["id"], feature_for_path(request.url.path))  # attribute model calls in this request
     return user
+
+
+_FEATURE_PREFIXES = (("/api/documents", "documents"), ("/api/memor", "memory"), ("/api/research", "research"),
+                     ("/api/team", "team"), ("/api/agent/", "agent"), ("/api/workspaces", "workspace"),
+                     ("/api/conversations", "chat"), ("/api/skills", "skill"), ("/api/agents", "custom_agent"),
+                     ("/api/automations", "automation"), ("/api/router", "router"), ("/api/projects", "chat"))
+
+
+def feature_for_path(path: str) -> str:
+    for prefix, feature in _FEATURE_PREFIXES:
+        if path.startswith(prefix):
+            return feature
+    return "other"
 
 
 async def csrf_guard(request: Request) -> None:
     """Cookie auth + SameSite=Lax, plus a custom header that cross-site forms cannot send."""
+    if request.url.path.startswith("/api/hooks/"):
+        return  # webhook triggers are called by other services and authenticated by their secret URL token
     if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.headers.get("x-requested-with") != "aria":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Missing CSRF header")
 

@@ -78,7 +78,7 @@ async def get_user(user_id: str) -> dict | None:
 # ---------- conversations ----------
 async def list_conversations(user_id: str, limit: int = 200) -> list[dict]:
     return rows(await pool().fetch(
-        "SELECT id, title, model_id, created_at, updated_at FROM conversations "
+        "SELECT id, title, model_id, project_id, agent_id, created_at, updated_at FROM conversations "
         "WHERE user_id=$1 AND workspace_id IS NULL ORDER BY updated_at DESC LIMIT $2", user_id, limit))
 
 
@@ -218,13 +218,14 @@ async def migrate(embedding_dim: int = 1536, disable_pgvector: bool = False) -> 
     from .memory.store import MIGRATIONS as MEMORY_MIGRATIONS  # 004 — advanced memory
     from .research.store import MIGRATIONS as RESEARCH_MIGRATIONS  # 006 — deep research
     from .setup import MIGRATIONS as SETUP_MIGRATIONS  # 009 — settings entered in the app
+    from .hub.schema import MIGRATIONS as HUB_MIGRATIONS  # 010 — platform hub
     from .schema import BASE  # 001 — base tables (previously created by db/init/01-schema.sh)
     from .team.store import MIGRATIONS as TEAM_MIGRATIONS  # 008 — multi-agent orchestration
     from .workspace.store import MIGRATIONS as WORKSPACE_MIGRATIONS  # 005 — coding workspaces
     async with pool().acquire() as c:
         vector = await ensure_extensions(c, disable_pgvector)
         for stmt in (BASE + MIGRATIONS + MEMORY_MIGRATIONS + WORKSPACE_MIGRATIONS + RESEARCH_MIGRATIONS
-                     + DOCUMENT_MIGRATIONS + TEAM_MIGRATIONS + SETUP_MIGRATIONS):
+                     + DOCUMENT_MIGRATIONS + TEAM_MIGRATIONS + SETUP_MIGRATIONS + HUB_MIGRATIONS):
             sql = _for_mode(stmt, embedding_dim, vector)
             if sql:
                 await c.execute(sql)

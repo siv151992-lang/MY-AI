@@ -58,7 +58,9 @@ class TeamManager:
         run = await store.create_run(user_id, goal.strip(), model_id)
         await self.bus.publish(run["id"], "created", {"goal": run["goal"]})
         self.owners[run["id"]] = user_id
-        self.tasks[run["id"]] = asyncio.create_task(self._run(user_id, run))
+        from ..hub import usage
+        with usage.scope(user_id, "team"):
+            self.tasks[run["id"]] = asyncio.create_task(self._run(user_id, run))
         return run
 
     async def _run(self, user_id: str, run: dict) -> None:
@@ -68,8 +70,15 @@ class TeamManager:
             await self.bus.publish(rid, type_, data)
         try:
             (ml, mm), (ul, um), reasoning = self.models(run.get("model_id"))
+            from ..hub import custom_agents, integrations
+            extra_specs = await custom_agents.team_specs(user_id)
+            api_tools = {t.name: t for t in await integrations.tools_for_user(user_id)} if extra_specs else {}
+
+            def pool():
+                return {**self.pool(), **api_tools}
             orch = Orchestrator(run=run, user_id=user_id, llm=ml, model=mm, utility_llm=ul, utility_model=um,
-                                tool_pool=lambda: self.pool(), publish=publish, max_parallel=self.max_parallel, reasoning=reasoning)
+                                tool_pool=pool, publish=publish, max_parallel=self.max_parallel, reasoning=reasoning,
+                                extra_specs=extra_specs)
             final, status = await orch.execute()
             await store.update_run(rid, status=status, final=final)
             await publish("final", {"status": status, "text": final[:200]})

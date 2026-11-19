@@ -59,7 +59,9 @@ class ResearchManager:
         run = await store.create_run(user_id, question.strip(), depth if depth in DEPTHS else "standard", model_id)
         await self.bus.publish(run["id"], "created", {"question": run["question"], "depth": run["depth"]})
         self.owners[run["id"]] = user_id
-        self.tasks[run["id"]] = asyncio.create_task(self._run(run))
+        from ..hub import usage
+        with usage.scope(user_id, "research"):
+            self.tasks[run["id"]] = asyncio.create_task(self._run(run))
         return run
 
     async def _run(self, run: dict) -> None:

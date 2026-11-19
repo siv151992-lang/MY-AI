@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from . import db
 from .config import get_settings
 from .llm import registry
-from .routers import agent, auth, conversations, documents, files, memory, research, setup, team, workspaces
+from .routers import agent, auth, conversations, documents, files, hub, memory, research, setup, team, workspaces
 from .security import csrf_guard
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -41,11 +41,14 @@ async def lifespan(app: FastAPI):
     models = registry.available_models()
     from .memory.service import maintenance_loop
     maintenance = asyncio.create_task(maintenance_loop())
+    from .hub.automations import get_runner
+    scheduler = asyncio.create_task(get_runner().loop())  # scheduled automations
     log.info("Providers: %s | models: %s", list(registry.providers()), [m.id for m in models])
     if not models:
         log.warning("No LLM provider configured yet: open Aria and paste an API key on the chat screen.")
     yield
     maintenance.cancel()
+    scheduler.cancel()
     await db.close()
 
 
@@ -54,7 +57,7 @@ app.add_middleware(CORSMiddleware, allow_origins=get_settings().cors_origin_list
                    allow_methods=["*"], allow_headers=["*"])
 
 for r in (auth.router, conversations.router, files.router, memory.router, memory.conversation_router, agent.router,
-          workspaces.router, research.router, documents.router, team.router, setup.router):
+          workspaces.router, research.router, documents.router, team.router, setup.router, hub.router):
     app.include_router(r)
 
 

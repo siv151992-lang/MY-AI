@@ -17,6 +17,8 @@ router = APIRouter(prefix="/api", tags=["conversations"])
 
 class ConversationIn(BaseModel):
     model_id: str | None = None
+    project_id: str | None = None   # start the chat inside a project
+    agent_id: str | None = None     # chat with one of the user's custom agents
 
 
 class ConversationPatch(BaseModel):
@@ -29,6 +31,7 @@ class MessageIn(BaseModel):
     model_id: str | None = None
     agent_mode: bool = False
     regenerate: bool = False
+    skill_id: str | None = None     # apply a saved or built-in skill to this message
 
 
 @router.get("/models")
@@ -49,7 +52,16 @@ async def list_conversations(user: dict = Depends(current_user)):
 
 @router.post("/conversations")
 async def create_conversation(body: ConversationIn, user: dict = Depends(current_user)):
-    return await db.create_conversation(user["id"], body.model_id)
+    from ..hub import custom_agents, projects
+    if body.project_id and not await projects.get_project(user["id"], body.project_id):
+        raise HTTPException(404, "Project not found")
+    if body.agent_id and not await custom_agents.get_agent(user["id"], body.agent_id):
+        raise HTTPException(404, "Agent not found")
+    conv = await db.create_conversation(user["id"], body.model_id)
+    if body.project_id or body.agent_id:
+        await db.pool().execute("UPDATE conversations SET project_id=$3, agent_id=$4 WHERE id=$1 AND user_id=$2",
+                                conv["id"], user["id"], body.project_id, body.agent_id)
+    return {**conv, "project_id": body.project_id, "agent_id": body.agent_id}
 
 
 async def _owned(user: dict, conv_id: str) -> dict:
@@ -73,7 +85,12 @@ async def get_conversation(conv_id: str, user: dict = Depends(current_user)):
              for f in await doc_store.get_docs(user["id"], readable)}
     for m in msgs:
         m["files"] = [files[f] for f in m["file_ids"] if f in files]
-    return {"id": conv["id"], "title": conv["title"], "model_id": conv["model_id"], "messages": msgs}
+    from ..hub import custom_agents, projects
+    project = await projects.get_project(user["id"], str(conv["project_id"])) if conv.get("project_id") else None
+    agent = await custom_agents.get_agent(user["id"], str(conv["agent_id"])) if conv.get("agent_id") else None
+    return {"id": conv["id"], "title": conv["title"], "model_id": conv["model_id"], "messages": msgs,
+            "project": {"id": project["id"], "name": project["name"]} if project else None,
+            "agent": {"id": agent["id"], "name": agent["name"]} if agent else None}
 
 
 @router.patch("/conversations/{conv_id}")

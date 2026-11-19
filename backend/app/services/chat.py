@@ -69,6 +69,18 @@ async def _user_content(user_id: str, text: str, file_ids: list[str], vision: bo
     return {"role": "user", "content": parts}, docs
 
 
+async def _attachment_kinds(user_id: str, file_ids: list[str]) -> set[str]:
+    if not file_ids:
+        return set()
+    from ..documents import access, store as doc_store
+    kinds = set()
+    for i in await access.filter_readable(user_id, file_ids):
+        d = await doc_store.get_doc(user_id, i)
+        if d:
+            kinds.add(d["kind"])
+    return kinds
+
+
 async def _title(user_id: str, conv_id: str, user_text: str) -> str | None:
     try:
         spec = registry.utility_model()
@@ -123,11 +135,18 @@ async def merge_events(agen: AsyncIterator[dict], queue: asyncio.Queue | None) -
 async def respond(*, user: dict, conv: dict, text: str, file_ids: list[str], model_id: str | None,
                   agent_mode: bool, regenerate: bool, tools: ToolRegistry | None = None,
                   extra_system: list[str] | None = None, side_events: asyncio.Queue | None = None,
-                  max_steps: int | None = None, extra_meta: dict | None = None) -> AsyncIterator[dict]:
-    """One chat turn. The coding workspace passes its own tools, prompt sections and a side-event queue."""
+                  max_steps: int | None = None, extra_meta: dict | None = None,
+                  feature: str = "chat", skill_id: str | None = None) -> AsyncIterator[dict]:
+    """One chat turn. The coding workspace passes its own tools, prompt sections and a side-event queue.
+
+    model_id "auto" (or a conversation set to auto) lets the adaptive router pick the model per message and fall back
+    to the next best model when a provider fails before answering. Project, custom-agent and skill context are added
+    by the platform hub."""
+    from ..hub import context as hub_context, routing, usage
+    usage.set_scope(user["id"], feature)
     s = get_settings()
-    spec = registry.get_model(model_id or conv.get("model_id"))
-    llm = registry.provider_for(spec)
+    wanted = model_id or conv.get("model_id")
+    registry.get_model(None)  # raises RuntimeError when no model is configured at all
     uspec = registry.utility_model()
 
     if regenerate:
@@ -143,8 +162,30 @@ async def respond(*, user: dict, conv: dict, text: str, file_ids: list[str], mod
         saved = await db.add_message(conv["id"], "user", text, file_ids)
         yield {"type": "user_saved", "message": saved}
 
-    if spec.id != conv.get("model_id"):
-        await db.update_conversation(user["id"], conv["id"], model_id=spec.id)
+    hub = await hub_context.for_turn(user["id"], conv, skill_id)
+    for err in hub.errors:
+        yield {"type": "status", "text": err}
+    if hub.model_id and wanted in (None, "auto") or hub.force_model:
+        wanted = hub.model_id or wanted
+    route = None
+    if wanted == "auto":
+        kinds = await _attachment_kinds(user["id"], file_ids)
+        route = await routing.route_for_user(user["id"], text, has_images="image" in kinds, has_documents="document" in kinds)
+        if not route.model_id:
+            yield {"type": "error", "message": "No connected model can handle this request: " + "; ".join(route.reasons[-1:])}
+            return
+        agent_mode = agent_mode or route.agent_mode
+        yield {"type": "route", **route.public()}
+        candidates = [registry.get_model(route.model_id)] + [registry.get_model(f) for f in route.fallbacks]
+    else:
+        candidates = [registry.get_model(wanted)]
+    spec = candidates[0]
+    if (("auto" if route else spec.id) != conv.get("model_id")) and not hub.force_model:
+        await db.update_conversation(user["id"], conv["id"], model_id="auto" if route else spec.id)
+    if hub.sections:
+        extra_system = list(extra_system or []) + hub.sections
+    from ..memory import store as memory_store
+    memory_store.PROJECT_SCOPE.set(hub.project_id)  # context-aware memory: this project's + global memories only
 
     user_msg, docs = await _user_content(user["id"], text, file_ids, spec.vision)
     budget = Budget(history=s.context_token_budget)
@@ -156,6 +197,7 @@ async def respond(*, user: dict, conv: dict, text: str, file_ids: list[str], mod
     if mem_public["memories"] or mem_public["recalled"] or compacted:
         yield {"type": "memory_context", **mem_public, "compacted": compacted}
     tools = tools or build_tools()
+    tools = hub.filter_tools(tools)
     state = conv.get("state") or {}
     state_text = render_state(state)
     last_asked = bool(prior and prior[-1]["role"] == "assistant" and (prior[-1].get("meta") or {}).get("clarification"))
@@ -167,37 +209,57 @@ async def respond(*, user: dict, conv: dict, text: str, file_ids: list[str], mod
                                    tool_names=tools.names() if spec.tools else [], extra_sections=extra_system)
 
     engine = ReasoningEngine.default(registry.provider_for(uspec), uspec.model)
-    cfg = AgentConfig(model=spec.model, max_tokens=spec.max_tokens, reasoning_mode=spec.reasoning,
-                      use_tools=spec.tools, max_steps=max_steps or s.max_agent_steps, max_revisions=s.max_revisions,
-                      agent_mode=agent_mode, has_documents=bool(docs))
     ctx = ToolContext(user_id=user["id"], conversation_id=conv["id"], file_ids=file_ids)
+    fallbacks_used: list[dict] = []
 
     final = None
     partial = ""
-    try:
-        async for ev in merge_events(run_agent(llm=llm, engine=engine, cfg=cfg, build_system=build_system,
-                                               history=history, user_message=user_msg, tools=tools, ctx=ctx,
-                                               state_text=state_text, last_assistant_asked=last_asked),
-                                     side_events):
-            if ev["type"] == "token":
-                partial += ev["text"]
-            elif ev["type"] == "reset":
-                partial = ""
-            if ev["type"] == "final":
-                final = ev
-                continue
-            yield ev
-    finally:
-        if final is None and partial.strip():
-            # Client pressed stop / disconnected, or the provider failed mid-answer: keep what was produced.
-            _spawn(db.add_message(conv["id"], "assistant", partial, [],
-                                  {"interrupted": True, "model": spec.id, **(extra_meta or {})}))
+    for attempt, spec in enumerate(candidates):
+        llm = registry.provider_for(spec)
+        cfg = AgentConfig(model=spec.model, max_tokens=spec.max_tokens, reasoning_mode=spec.reasoning,
+                          use_tools=spec.tools, max_steps=max_steps or s.max_agent_steps, max_revisions=s.max_revisions,
+                          agent_mode=agent_mode, has_documents=bool(docs))
+        acted = retry = False
+        try:
+            async for ev in merge_events(run_agent(llm=llm, engine=engine, cfg=cfg, build_system=build_system,
+                                                   history=history, user_message=user_msg, tools=tools, ctx=ctx,
+                                                   state_text=state_text, last_assistant_asked=last_asked),
+                                         side_events):
+                if ev["type"] == "token":
+                    partial += ev["text"]
+                elif ev["type"] == "reset":
+                    partial = ""
+                elif ev["type"] == "tool_start":
+                    acted = True
+                if ev["type"] == "final":
+                    final = ev
+                    continue
+                if (ev["type"] == "error" and route is not None and attempt + 1 < len(candidates)
+                        and not partial.strip() and not acted):
+                    # The provider failed before producing anything: nothing to undo, so try the next best model.
+                    retry = True
+                    fallbacks_used.append({"model": spec.id, "error": str(ev.get("message", ""))[:300]})
+                    break
+                yield ev
+        finally:
+            if final is None and partial.strip():
+                # Client pressed stop / disconnected, or the provider failed mid-answer: keep what was produced.
+                _spawn(db.add_message(conv["id"], "assistant", partial, [],
+                                      {"interrupted": True, "model": spec.id, **(extra_meta or {})}))
+        if not retry:
+            break
+        yield {"type": "route_fallback", "from": spec.id, "to": candidates[attempt + 1].id,
+               "reason": fallbacks_used[-1]["error"]}
 
     if final is None or not final["content"].strip():
         if final is not None:
             yield {"type": "error", "message": "The model returned an empty response. Try again or switch models."}
         return
     final["meta"]["model"] = spec.id
+    if route is not None:
+        final["meta"]["route"] = {**route.public(), "model_id": spec.id, "fallbacks_used": fallbacks_used}
+    if hub.meta:
+        final["meta"].update(hub.meta)
     final["meta"].update(extra_meta or {})
     final["meta"]["memory"] = {"ids": [m["id"] for m in recall.memories], "recalled": len(recall.recalled),
                                "compacted": compacted}  # ids only: deleting a memory leaves no copy behind
