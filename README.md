@@ -358,7 +358,7 @@ The backend runs in this mode on any OS. It falls back automatically when pgvect
 
 You need Docker Desktop (Windows or macOS) or Docker Engine (Linux).
 
-**Windows, one click:** download `aria.bat` and double-click it from anywhere. If it isn't inside the project folder it downloads Aria into `%USERPROFILE%\Aria`, starts Docker Desktop if needed, creates `.env` with random secrets, starts everything, opens the browser and adds an **Aria** shortcut to your Desktop. `aria.bat stop`, `logs`, `status` and `update` (downloads the latest code, keeping your `.env`) cover the rest.
+**Windows, one click:** download `aria.bat` and double-click it from anywhere. It is the only file you need. If it isn't inside the project folder it downloads Aria into `%USERPROFILE%\Aria`. With Docker Desktop installed it uses Docker, starting Docker Desktop if needed; without Docker it hands over to `aria-native.bat` and runs Aria directly on Windows (see *Run without Docker*), and remembers that choice. `aria.bat native` and `aria.bat docker` switch between the two. It creates `.env` with random secrets, starts everything, opens the browser and adds an **Aria** shortcut to your Desktop. `aria.bat stop`, `logs`, `status` and `update` (downloads the latest code, keeping your `.env`) cover the rest.
 
 ```bash
 cp .env.example .env

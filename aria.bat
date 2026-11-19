@@ -5,7 +5,9 @@ rem  Aria - one-click launcher for Windows
 rem
 rem  Just double-click this file. It works from anywhere (Downloads, Desktop...):
 rem    - downloads Aria into %USERPROFILE%\Aria if it isn't next to this file
-rem    - starts Docker Desktop if it isn't running
+rem    - uses Docker Desktop if it is installed (starting it if needed);
+rem      without Docker it runs Aria directly on Windows (no code execution,
+rem      keyword search) - this is remembered for next time
 rem    - creates the settings file (.env) with secure random secrets
 rem    - starts Aria and opens it in your browser
 rem    - puts an "Aria" shortcut on your Desktop
@@ -15,6 +17,8 @@ rem    aria.bat stop     stop Aria (your data is kept)
 rem    aria.bat logs     follow the server logs (Ctrl+C to leave)
 rem    aria.bat status   show the running containers
 rem    aria.bat update   download the latest version (keeps your .env), rebuild, start
+rem    aria.bat native   switch to running without Docker
+rem    aria.bat docker   switch to running with Docker
 rem ===========================================================================
 set "REPO_ZIP=https://github.com/siv151992-lang/MY-AI/archive/refs/heads"
 set "BRANCH=main"
@@ -29,6 +33,9 @@ if exist "%~dp0docker-compose.yml" (
 )
 if "%PROJECT:~-1%"=="\" set "PROJECT=%PROJECT:~0,-1%"
 
+set "MODE="
+if exist "%PROJECT%\aria-native.bat" call :pick_mode
+if /i "%MODE%"=="native" goto :native
 if /i "%CMD%"=="update" goto :download
 if not exist "%PROJECT%\docker-compose.yml" goto :download
 goto :have_project
@@ -65,14 +72,10 @@ echo [*] Aria files are in "%PROJECT%"
 :have_project
 cd /d "%PROJECT%"
 
-rem --- Docker must be installed and running ----------------------------------
-where docker >nul 2>&1
-if errorlevel 1 (
-  echo [X] Docker Desktop is not installed. It is required to run Aria.
-  echo     Opening the download page. Install it, restart your PC if asked, then double-click this file again.
-  start "" "https://www.docker.com/products/docker-desktop/"
-  goto :fail
-)
+if not defined MODE call :pick_mode
+if /i "%MODE%"=="native" goto :native
+
+rem --- Docker must be running ------------------------------------------------
 docker info >nul 2>&1
 if not errorlevel 1 goto :docker_ok
 set "DD=%ProgramFiles%\Docker\Docker\Docker Desktop.exe"
@@ -90,10 +93,16 @@ docker info >nul 2>&1
 if not errorlevel 1 goto :docker_ok
 set /a TRIES+=1
 if %TRIES% lss 80 goto :wait_docker
-echo [X] Docker did not start within 4 minutes. Open Docker Desktop, wait until it says it is running, then try again.
-goto :fail
+echo [!] Docker did not start within 4 minutes.
+choice /c YN /m "    Run Aria without Docker instead"
+if errorlevel 2 goto :fail
+goto :native
 
 :docker_ok
+>"%PROJECT%\.aria-mode" echo docker
+rem If Aria was running without Docker, stop it so the ports are free
+if exist "%PROJECT%\aria-native.bat" if exist "%PROJECT%\data\pgdata" call "%PROJECT%\aria-native.bat" stop >nul 2>&1
+cd /d "%PROJECT%"
 docker compose version >nul 2>&1
 if errorlevel 1 (
   set "DC=docker-compose"
@@ -179,6 +188,42 @@ if exist "%USERPROFILE%\Desktop\Aria.lnk" exit /b 0
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$s = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop') + '\Aria.lnk');" ^
   "$s.TargetPath = '%PROJECT%\aria.bat'; $s.WorkingDirectory = '%PROJECT%'; $s.Description = 'Start Aria'; $s.Save()" >nul 2>&1
+exit /b 0
+
+rem --- Without Docker: hand over to aria-native.bat (same folder, same data) ----
+:native
+if not exist "%PROJECT%\aria-native.bat" (
+  set "CMD=update"
+  goto :download
+)
+>"%PROJECT%\.aria-mode" echo native
+echo [*] Running Aria without Docker.
+endlocal & call "%PROJECT%\aria-native.bat" %CMD%
+exit /b %errorlevel%
+
+rem --- Docker or not? "aria.bat native/docker" chooses; the choice is remembered --
+:pick_mode
+set "MODE="
+if /i "%CMD%"=="native" set "MODE=native"
+if /i "%CMD%"=="docker" set "MODE=docker"
+if defined MODE (
+  set "CMD="
+  exit /b 0
+)
+if exist "%PROJECT%\.aria-mode" set /p MODE=<"%PROJECT%\.aria-mode"
+if /i "%MODE%"=="docker" (
+  where docker >nul 2>&1 && exit /b 0
+  set "MODE="
+)
+if /i "%MODE%"=="native" exit /b 0
+where docker >nul 2>&1
+if errorlevel 1 (
+  echo [*] Docker Desktop isn't installed, so Aria will run directly on Windows.
+  echo     Code execution is off in this mode. To use Docker later: install Docker Desktop, then run "aria.bat docker".
+  set "MODE=native"
+) else (
+  set "MODE=docker"
+)
 exit /b 0
 
 :fail
