@@ -72,3 +72,22 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  docker:
+    name: Docker images build (plain HTTP blocked)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # Some networks refuse outgoing connections on port 80. Reproduce that so every image must build over HTTPS.
+      - name: Block outgoing plain HTTP (port 80)
+        run: |
+          sudo iptables -I OUTPUT -p tcp --dport 80 -j REJECT
+          sudo iptables -I FORWARD -p tcp --dport 80 -j REJECT
+          sudo iptables -L DOCKER-USER >/dev/null 2>&1 && sudo iptables -I DOCKER-USER -p tcp --dport 80 -j REJECT || true
+          if curl -s -m 10 -o /dev/null http://deb.debian.org/; then echo "port 80 is still open"; exit 1; fi
+          docker run --rm alpine sh -c 'wget -q -T 10 -O /dev/null http://deb.debian.org/ && exit 1 || exit 0'
+      - name: Build backend, sandbox and frontend images
+        run: |
+          cp .env.example .env
+          docker compose build
