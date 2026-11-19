@@ -3,7 +3,8 @@ import io
 
 import pytest
 
-from app.agent import memory_engine
+from app.memory import context as memory_context
+from app.memory import extraction
 from app.agent.jsonutil import extract_json
 from app.agent.prompts import build_system_prompt
 from app.agent.tools.base import Tool, ToolContext, ToolRegistry
@@ -21,28 +22,29 @@ def test_extract_json_variants():
 
 
 # ---------- memory ----------
-def test_parse_facts_filters():
-    assert memory_engine.parse_facts('{"facts": ["Works in Java", "x", "' + "y" * 400 + '"]}') == ["Works in Java"]
+def test_parse_candidates_filters_legacy_facts_shape():
+    got = extraction.parse_candidates('{"facts": ["Works in Java", "x", "' + "y" * 400 + '"]}')
+    assert [c.content for c in got] == ["Works in Java"]
 
 
-def test_is_duplicate():
-    existing = [{"content": "Works in Java.", "score": 0.5}]
-    assert memory_engine.is_duplicate("works in java", existing, vector_scores=False)
-    assert not memory_engine.is_duplicate("Lives in Chennai", existing, vector_scores=False)
-    assert memory_engine.is_duplicate("Codes in Java", [{"content": "x", "score": 0.95}], vector_scores=True)
-    # ts_rank scores must not be mistaken for similarity
-    assert not memory_engine.is_duplicate("Codes in Java", [{"content": "x", "score": 0.95}], vector_scores=False)
+def test_find_duplicate():
+    existing = [{"content": "Works in Java.", "sim": 0.5}]
+    assert extraction.find_duplicate("works in java", existing, vector_scores=False)
+    assert not extraction.find_duplicate("Lives in Chennai", existing, vector_scores=False)
+    assert extraction.find_duplicate("Codes in Java", [{"content": "x", "sim": 0.95}], vector_scores=True)
+    # without embeddings there is no similarity to trust
+    assert not extraction.find_duplicate("Codes in Java", [{"content": "x", "sim": 0.95}], vector_scores=False)
 
 
 def test_split_history_keeps_recent_within_budget_and_starts_on_user():
     msgs = []
     for i in range(20):
         msgs += [text_msg("user", f"q{i} " + "w" * 400), text_msg("assistant", f"a{i} " + "w" * 400)]
-    idx = memory_engine.split_history(msgs, budget=1000)
+    idx = memory_context.split_history(msgs, budget=1000)
     assert 0 < idx < len(msgs)
     assert msgs[idx]["role"] == "user"
-    assert sum(memory_engine.message_tokens(m) for m in msgs[idx:]) <= 1000 + 110
-    assert memory_engine.split_history(msgs[:4], budget=100_000) == 0
+    assert sum(memory_context.message_tokens(m) for m in msgs[idx:]) <= 1000 + 110
+    assert memory_context.split_history(msgs[:4], budget=100_000) == 0
 
 
 def test_system_prompt_includes_context():

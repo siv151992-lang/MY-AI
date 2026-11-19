@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -23,14 +24,17 @@ async def lifespan(app: FastAPI):
     s = get_settings()
     s.upload_dir.mkdir(parents=True, exist_ok=True)
     await db.connect(s.database_url)
-    await db.migrate()
+    await db.migrate(s.embedding_dim)
     from .autonomy.manager import get_manager
     await get_manager().recover_after_restart()
     models = registry.available_models()
+    from .memory.service import maintenance_loop
+    maintenance = asyncio.create_task(maintenance_loop())
     log.info("Providers: %s | models: %s", list(registry.providers()), [m.id for m in models])
     if not models:
         log.warning("No LLM provider configured — chat will return 503 until you set an API key.")
     yield
+    maintenance.cancel()
     await db.close()
 
 
@@ -38,7 +42,7 @@ app = FastAPI(title="Aria API", version="1.0.0", lifespan=lifespan, dependencies
 app.add_middleware(CORSMiddleware, allow_origins=get_settings().cors_origin_list, allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
 
-for r in (auth.router, conversations.router, files.router, memory.router, agent.router):
+for r in (auth.router, conversations.router, files.router, memory.router, memory.conversation_router, agent.router):
     app.include_router(r)
 
 

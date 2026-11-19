@@ -24,17 +24,29 @@ How you answer (response):
 - Write in the user's language."""
 
 
-def build_system_prompt(*, user_name: str, memories: list[str], conversation_summary: str | None,
+def _memory_line(m) -> str:
+    if isinstance(m, str):
+        return f"- {m}"
+    tag = m.get("category", "fact")
+    return f"- ({tag}{', pinned' if m.get('pinned') else ''}) {m['content']}"
+
+
+def build_system_prompt(*, user_name: str, memories: list, conversation_summary: str | None,
                         conversation_state: str, documents: list[dict], reasoning_guidance: str,
-                        tool_names: list[str]) -> str:
+                        tool_names: list[str], recalled: list[dict] | None = None) -> str:
     parts = [CORE.format(date=datetime.now(timezone.utc).strftime("%A, %d %B %Y"))]
     if user_name:
         parts.append(f"The user's name is {user_name}.")
     if memories:
-        parts.append("Things you know about the user from earlier conversations (use only where relevant, "
-                     "never recite them unprompted):\n" + "\n".join(f"- {m}" for m in memories))
+        parts.append("What you remember about the user (approved by them; follow 'instruction' items, use the rest only "
+                     "where relevant, never recite them unprompted, and if the user contradicts one, trust the user "
+                     "and offer to update it):\n" + "\n".join(_memory_line(m) for m in memories))
     if conversation_summary:
         parts.append("Summary of the earlier part of this conversation:\n" + conversation_summary)
+    if recalled:
+        parts.append("Recalled details that may be relevant to this message:\n" + "\n\n".join(
+            (f"[earlier in a different chat: {r.get('title') or 'untitled'}]\n" if r.get("other") else
+             f"[earlier in this chat, messages {r['from_seq']}-{r['to_seq']}]\n") + r["content"] for r in recalled))
     if conversation_state:
         parts.append("Working state of this conversation (goals, constraints, decisions, facts — stay consistent "
                      "with it unless the user changes it):\n" + conversation_state)

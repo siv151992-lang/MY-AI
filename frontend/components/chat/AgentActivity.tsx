@@ -12,6 +12,9 @@ const TOOL_META: Record<string, { icon: any; label: (i: any) => string }> = {
   run_python: { icon: Code2, label: () => "Ran Python code" },
   search_documents: { icon: FileSearch, label: (i) => `Searched your files for “${i.query ?? ""}”` },
   save_memory: { icon: Brain, label: () => "Saved to memory" },
+  search_memory: { icon: Brain, label: (i) => `Searched memory for “${i.query ?? ""}”` },
+  update_memory: { icon: Brain, label: () => "Corrected a memory" },
+  forget_memory: { icon: Brain, label: () => "Deleted a memory" },
 };
 
 function safeHost(u: unknown) {

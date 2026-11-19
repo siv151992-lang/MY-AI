@@ -12,8 +12,9 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 │ Chat service ── Orchestrator: Plan → Reason/Act (tool loop) → Verify → Revise  │
 │   Reasoning engine   prompts.py      system prompt: how to think & answer      │
 │   Planning engine    planner.py      decides when to decompose; JSON step plan │
-│   Memory engine      memory_engine   long-term facts (pgvector) + rolling      │
-│                                      conversation summaries for long chats     │
+│   Memory system      memory/         tiered: working window → state → rolling  │
+│                                      summary → episodic segments → long-term   │
+│                                      memories (pgvector, user-approved)        │
 │   Tool engine        tools/base.py   typed registry, timeouts, errors → model  │
 │   Research engine    tools/web.py    web_search (Tavily/Brave) + fetch_url     │
 │   Coding engine      tools/code.py   run_python in the isolated sandbox        │
@@ -24,7 +25,9 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
         │                                             │ internal network only
 ┌───────▼────────── PostgreSQL 16 + pgvector ──┐  ┌───▼──── Python sandbox ────────┐
 │ users · conversations · messages · files ·   │  │ no internet, read-only FS, non- │
-│ document_chunks(vector, tsv) · memories      │  │ root, rlimits, timeouts, token  │
+│ document_chunks · memories · memory_revisions│
+│ memory_settings · memory_audit ·             │
+│ conversation_segments (vector, tsv)          │  │ root, rlimits, timeouts, token  │
 └──────────────────────────────────────────────┘  └────────────────────────────────┘
 ```
 
@@ -73,7 +76,7 @@ goal ─► plan (GoalPlanner: steps, tool for each step, success criteria — o
 |---|---|---|
 | `web_search`, `fetch_url` | read the web | no |
 | `run_python` | sandboxed computation | no |
-| `search_documents`, `save_memory` | your Aria data | no |
+| `search_documents`, `save_memory`, `search_memory`, `update_memory`, `forget_memory` | your Aria data | no |
 | `create_file` | creates a downloadable file in your Aria library | no |
 | `http_request` | external APIs | **yes**, for anything other than GET or HEAD |
 | `send_email` | SMTP (`SMTP_*` in `.env`) | **always** |
@@ -84,6 +87,60 @@ To add a tool, create a `Tool(...)` with `requires_approval=True` (or a predicat
 **Activity panel:** a progress bar, approval cards (with the exact parameters), the current task with its live tool call, the plan with each step's status, attempts and result, errors and recovery, verification, and a live timeline. Events stream over SSE and are stored, so you can reload the page or come back later and see the full history.
 
 **Limits:** you can set the limits in `.env` (`AUTONOMY_*`): retries per step, re-plans, model calls per step, approval timeout and concurrent runs. Runs execute inside the backend process. If the server restarts mid-run, that run is marked as interrupted rather than silently resumed.
+
+## Memory architecture
+
+The memory system lives in `backend/app/memory/`. It has five tiers, from most to least volatile:
+
+| Tier | Where | What it holds |
+|---|---|---|
+| Working memory | `context.py` | The most recent turns, verbatim, sized to `CONTEXT_TOKEN_BUDGET`. |
+| Conversation state | `agent/reasoning/context.py` | Structured goals, constraints, decisions and facts for each chat. |
+| Rolling summary | `conversations.summary` | Prose summary of everything that has scrolled out of the working window. |
+| Episodic segments | `conversation_segments` (pgvector + tsvector) | A summary of each compacted chunk of a chat. These are searched every turn, so an old detail comes back when it becomes relevant again. |
+| Long-term memory | `memories` (pgvector + tsvector) | Durable facts about the user, each with a category, importance, confidence, sensitivity, version history and source. |
+
+**How a turn uses memory**
+
+1. **Automatic context management.** When the verbatim window overflows its budget, the oldest turns are compacted in one batch down to 60% of the budget. This hysteresis means summarisation doesn't run on every turn. Each chunk becomes an embedded segment, and the segments are folded into the rolling summary, which is re-compressed if it grows too long.
+2. **Context retrieval.** Hybrid search over long-term memory: pgvector cosine similarity and Postgres full-text search, merged with reciprocal-rank fusion and then re-ranked by importance and recency. Pinned memories are always included. Results are packed into a token budget. Relevant segments from this chat are recalled the same way, and from your other chats too if you opt in.
+3. **Transparency.** The answer shows which memories it used. The message stores only their ids, so deleting a memory leaves no copy behind.
+4. **Learning.** After the answer, the utility model proposes facts (category, importance 1–5, confidence, and `supersedes` when the user corrected something already stored). They appear under the answer as *Remember this?* with Save, Correct and Dismiss buttons.
+
+**Importance scoring** (`scoring.py`). The starting importance comes from the category (instructions > profile > preferences > projects > …), the source (added by you or asked for explicitly gets a boost), the extractor's estimate and its confidence. It is raised each time the same fact comes up again. When ranking, importance decays with a 120-day half-life down to a floor, gets a small boost from how often the memory is used, and never decays for pinned memories. You can set importance yourself with the dots next to each memory.
+
+**Lifecycle.** `pending` (suggested) → `active` → `archived` (superseded or hidden) → deleted. Deletion is a hard delete, including revisions. Every create, edit, approval and correction is versioned in `memory_revisions`. The audit log (`memory_audit`) records *what happened* but never the content.
+
+**Privacy rules** (`privacy.py`), all per user under *Memory → Privacy*:
+
+| Setting | Default | Effect |
+|---|---|---|
+| Memory | on | Master switch for reading and writing long-term memory. |
+| Use memories in chats | on | Inject relevant memories into prompts. |
+| Learn from conversations | on | Propose facts automatically. |
+| Ask before saving | **on** | Proposed facts wait for your approval. Sensitive or low-confidence ones always wait, whatever this is set to. |
+| Allow sensitive topics | off | Health, beliefs, sexuality, politics, finances and legal status may be *proposed*. |
+| Keep source quotes | on | Store the words a memory was learned from, with email addresses, phone numbers and secrets redacted. |
+| Summarise long chats | on | When off, older turns are simply dropped and nothing derived from the chat is stored. |
+| Recall across chats | off | Search summaries of your other chats. |
+| Forget unused memories after | never | Retention: unpinned memories not used in N days are deleted. |
+| Discard unreviewed suggestions after | 14 days | |
+
+Secrets (passwords, API keys and tokens, Luhn-valid card numbers, SSNs, IBANs, private keys, ID numbers) are **never** stored, even if you ask. Each chat also has a **memory off** switch (the 🧠 button in the chat header) that stops that chat from reading or writing long-term memory.
+
+**API** (all scoped to the signed-in user):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/memories?status=&category=&q=&sort=` | List memories, or semantic search with `q` |
+| `POST /api/memories` · `PATCH/DELETE /api/memories/{id}` · `GET /api/memories/{id}` | Add, correct/pin/archive, delete, or inspect (with revision history and source chat) |
+| `POST /api/memories/{id}/approve` · `/reject` · `POST /api/memories/review` | Review suggestions, one at a time or in bulk |
+| `POST /api/memories/delete` `{scope or ids, confirm: true, include_conversation_memory}` | Bulk delete |
+| `GET /api/memories/export?format=json\|markdown` · `POST /api/memories/import` | Export everything (memories, revisions, settings, chat summaries, audit log) or import an export |
+| `GET/PUT /api/memories/settings` · `GET /api/memories/audit` | Privacy settings and activity log |
+| `GET/PATCH/DELETE /api/conversations/{id}/memory` | Inspect a chat's summary, segments and state; correct the summary; turn memory off for that chat; or reset it |
+
+A maintenance task runs every 6 hours. It expires stale suggestions, applies retention, and backfills embeddings for memories saved while the embedding provider was down. Without `EMBEDDING_PROVIDER`, everything still works using full-text search.
 
 ## Quick start (Docker)
 
@@ -118,8 +175,8 @@ Model IDs change over time. If a provider rejects a model name, update `backend/
 - **Agent mode** (the ✨ toggle): every answer gets a visible plan, tool calls and a self-check. Without the toggle, Aria still plans automatically for complex requests and verifies any answer that used tools.
 - **Documents:** PDF, DOCX, text and code files are extracted and chunked, and embedded too when embeddings are configured. Small files go straight into context; large ones are read through `search_documents`.
 - **Images:** sent to vision-capable models. Aria tells you if the selected model can't see images.
-- **Memory:** facts are extracted automatically after each turn and deduplicated, and the model can also save them on request. You can view, add or delete memories under *Account → Memory*.
-- **Long conversations:** older turns are folded into a rolling summary when the context budget is reached.
+- **Memory:** Aria proposes durable facts it learns and you approve them inline or under *Account → Memory*, where you can also search, correct, pin, archive, export, import and delete. See [Memory architecture](#memory-architecture).
+- **Long conversations:** older turns are condensed automatically into a rolling summary plus searchable sections, so details from far back can still be recalled.
 - **Python execution:** in an isolated container, for calculations, data analysis and testing code before showing it.
 - **Light, dark and system themes;** responsive layout with a slide-over sidebar on mobile.
 
@@ -147,10 +204,14 @@ cd frontend && npm install && npm run dev        # http://localhost:3000, proxie
 ## Tests
 
 ```bash
-cd backend && pytest            # 57 tests (incl. 10 autonomous-run scenarios: approval granted/denied,
+cd backend && pytest            # 86 tests (incl. 10 autonomous-run scenarios: approval granted/denied,
                                 # grounding guard, retry, re-plan, remediation, cancel, report): stream parsers (incl. thinking blocks), agent loop, reasoning
                                 # engine (analyzer, clarifier, planner, verifier, state, scratchpad privacy),
-                                # memory, tools, SSRF guard, chunking, PDF extraction, sandbox
+                                # memory (privacy rules, scoring, rank fusion, extraction, compaction),
+                                # tools, SSRF guard, chunking, PDF extraction, sandbox
+# Memory integration tests against real PostgreSQL + pgvector (load db/init/01-schema.sh into an
+# empty database first; skipped unless the URL is set):
+TEST_DATABASE_URL=postgresql://postgres@localhost:5432/aria_test pytest tests/test_memory_pg.py
 cd frontend && npm test         # SSE parser
 ```
 

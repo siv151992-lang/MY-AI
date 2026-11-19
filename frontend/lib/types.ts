@@ -44,6 +44,8 @@ export type ChatMessage = {
   streaming?: boolean;
   interrupted?: boolean;
   model?: string;
+  memory?: MessageMemory | null;
+  suggestions?: MemorySuggestion[];
 };
 
 export type ServerMessage = {
@@ -62,10 +64,63 @@ export type ServerMessage = {
     revisions?: number;
     interrupted?: boolean;
     model?: string;
+    memory?: { ids: string[]; recalled: number; compacted: boolean };
   };
 };
 
-export type Memory = { id: string; content: string; created_at: string };
+// ---------------- memory ----------------
+export type MemoryCategory = "instruction" | "profile" | "preference" | "project" | "relationship" | "fact" | "other";
+export type MemoryStatus = "pending" | "active" | "archived";
+
+export type Memory = {
+  id: string; content: string; category: MemoryCategory; status: MemoryStatus;
+  source: "manual" | "explicit" | "extracted" | "import";
+  importance: number; confidence: number; sensitivity: "normal" | "personal" | "sensitive";
+  pinned: boolean; access_count: number; version: number;
+  created_at: string; updated_at: string; last_accessed_at: string | null;
+  source_conversation_id: string | null; source_excerpt: string | null; supersedes_id: string | null;
+  score?: number; relevance?: number; sim?: number;
+};
+
+export type MemoryRevision = {
+  version: number; content: string; category: MemoryCategory; importance: number; status: MemoryStatus;
+  changed_by: "user" | "assistant" | "system"; reason: string; created_at: string;
+};
+
+export type MemoryDetail = Memory & {
+  revisions: MemoryRevision[];
+  source_conversation: { id: string; title: string } | null;
+};
+
+export type MemoryList = { items: Memory[]; counts: Record<MemoryStatus, number>; categories: MemoryCategory[] };
+
+export type MemorySettings = {
+  memory_enabled: boolean; auto_extract: boolean; require_approval: boolean; use_in_chat: boolean;
+  allow_sensitive: boolean; store_source_excerpts: boolean; summarize_conversations: boolean;
+  cross_conversation_recall: boolean; retention_days: number | null; pending_expiry_days: number;
+};
+
+export type AuditEntry = { id: number; memory_id: string | null; action: string; detail: Record<string, unknown>; created_at: string };
+
+export type ConversationMemory = {
+  conversation_id: string; memory_enabled: boolean; summary: string | null; summarized_upto: number;
+  total_messages: number; state: Record<string, string[]>;
+  segments: { id: number; from_seq: number; to_seq: number; summary: string; created_at: string }[];
+  memories: Memory[];
+};
+
+/** Memory used for one answer (live from the stream; after reload only ids/counts are kept). */
+export type MessageMemory = {
+  used: { id: string; content?: string; category?: MemoryCategory; pinned?: boolean }[];
+  recalled: number;
+  compacted: boolean;
+};
+
+export type MemorySuggestion = {
+  id: string; content: string; category: MemoryCategory; status: "pending" | "active";
+  importance: number; supersedes_id: string | null;
+  decision?: "saved" | "dismissed" | "error";
+};
 
 // ---------------- autonomous agent ----------------
 export type RunStatus = "planning" | "running" | "awaiting_approval" | "verifying" | "completed"
