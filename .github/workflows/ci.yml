@@ -46,7 +46,10 @@ jobs:
           python-version: "3.12"  # matches backend/Dockerfile
           cache: pip
           cache-dependency-path: backend/requirements.txt
-      - run: pip install -r requirements.txt
+      - name: Install OCR tools (Tesseract, poppler) used by document extraction tests
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr poppler-utils
+      # pandas: the tests run the sandbox server in-process, and table analysis executes pandas code there
+      - run: pip install -r requirements.txt pandas
       - name: Load database schema
         run: bash ../db/init/01-schema.sh
       - run: python -m pytest -q -rs

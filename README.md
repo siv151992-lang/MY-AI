@@ -8,6 +8,7 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 │ Code workspace: file explorer · CodeMirror editor · terminal · diffs · git ·   │
 │                 AI panel with approval cards and per-turn undo                 │
 │ Deep research: live progress · cited report · sources · claims · MD/PDF export │
+│ Documents: library · ask (RAG) · compare · extract · tables · generate · share │
 └──────────────┬─────────────────────────────────────────────────────────────────┘
                │ same-origin /api/* (httpOnly session cookie, SSE streaming)
 ┌──────────────▼──────────────── FastAPI backend ────────────────────────────────┐
@@ -22,6 +23,8 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 │                                      gate, checkpoints, sandboxed commands     │
 │   Deep research      research/       plan → search → read → quote-verified     │
 │                                      claims → cross-check → verify → report    │
+│   Documents          documents/      extract + OCR → chunks/tables → hybrid    │
+│                                      RAG; access checks on every read          │
 │   Tool engine        tools/base.py   typed registry, timeouts, errors → model  │
 │   Research engine    tools/web.py    web_search (Tavily/Brave) + fetch_url     │
 │   Coding engine      tools/code.py   run_python in the isolated sandbox        │
@@ -35,7 +38,8 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 │ document_chunks · memories (+revisions,      │  │ /exec shell commands on a copy │
 │ settings, audit) · conversation_segments ·   │  │ of a project (python, pytest,  │
 │ workspaces · workspace_activity · agent_* ·  │
-│ research_runs/sources/claims/events          │  │ node, npm, git, make)          │
+│ research_runs/sources/claims/events ·        │
+│ document_tables · document_access            │  │ node, npm, git, make)          │
 └──────────────────────────────────────────────┘  │ no internet, read-only FS, non-│
   workspaces volume: one git repo per project      │ root, rlimits, timeouts, token │
                                                    └────────────────────────────────┘
@@ -238,6 +242,50 @@ Each run is a background task. Its progress streams live: a phase bar, every sea
 - Reliability ratings and "corroborated" are signals, not proof, and the report says so.
 - Search quality depends on the provider. Pages that need JavaScript to render can't be read.
 
+## Document intelligence
+
+Open **Documents** in the sidebar (`/documents`). Files attached in chat go through the same pipeline. The code is in `backend/app/documents/`.
+
+**Formats** (`extract.py`). The type is detected from the file's content, not its name or MIME type.
+
+| Format | What is extracted |
+|---|---|
+| PDF | Text per page. Pages with no text layer are **OCR'd** (poppler renders the page, Tesseract reads it; up to 40 pages). Encrypted or damaged files get a clear error. |
+| DOCX | Paragraphs in document order, with heading sections and lists, plus tables (as real tables and as text). |
+| XLSX | Every sheet as a table with a detected header row. Formula cells are counted, and the file is flagged if it was saved without calculated values. |
+| CSV / TSV | Delimiter and encoding are detected; numbers are typed. |
+| PPTX | One block per slide: title, bullets with indentation, tables and speaker notes. |
+| TXT / Markdown / code | Markdown is split by heading. |
+| Images (PNG, JPEG, GIF, WebP, TIFF, BMP) | **OCR** with Tesseract. If a vision model is configured, an AI description of the image (charts, diagrams, layout) is also indexed. |
+
+Legacy `.doc`, `.xls` and `.ppt` files and ZIP archives are rejected with a message saying what to do instead.
+
+**Indexing and RAG** (`chunking.py`, `retrieval.py`):
+- Text is chunked within its location, so every passage remembers its page, slide, sheet rows or heading.
+- Chunks are embedded into pgvector when an embedding provider is configured. Chunks indexed while it was unavailable are backfilled by the maintenance task.
+- Retrieval is hybrid: vector similarity plus Postgres full-text search, merged by reciprocal-rank fusion.
+- Answers must cite passages as `[P#]`. A citation to a passage that wasn't retrieved is replaced with **[unsupported]**. Each citation shows the file, location and snippet.
+- If nothing relevant is found, the answer says so instead of guessing.
+
+**Operations.** Each is available in the UI, through the API (`/api/documents/...`), and as a chat tool.
+
+| Feature | How |
+|---|---|
+| Summarisation | Brief, bullet or detailed. Long documents are summarised in parts, then the parts are merged. A brief summary is made automatically after upload. |
+| Question answering | Over selected documents, or everything you can access, with cited passages. |
+| Multi-document comparison | 2–6 documents. Passages are retrieved from each one, and the result is a cited comparison table plus differences, similarities and gaps. |
+| Data extraction | Presets (invoice, contract, résumé, research paper) or custom fields. Each value comes with its source text, which is checked against the document. Values whose source text isn't found are marked **unverified**, and missing values are **not found** (never invented). Export as JSON or CSV. |
+| Table and spreadsheet analysis | Each table gets a column profile (type, empty count, distinct values, min/max/mean/sum). Questions are answered by model-written **pandas code run over all rows in the sandbox**, with the code and raw output shown. Tables can be downloaded as CSV. |
+| Document generation | DOCX, XLSX (typed numbers, frozen header row), PPTX (bullet and table slides, speaker notes), PDF or Markdown, optionally grounded in selected documents. The sources used are recorded on the new file, which is indexed like any upload. |
+| Chat tools | `search_documents`, `list_documents`, `read_document`, `summarize_document`, `compare_documents`, `extract_data`, `analyze_table`, `generate_document`. |
+
+**Privacy and access control** (`access.py`):
+- **Private by default.** Only the uploader (the owner) can see a document. Owners can share read-only with specific Aria users by email.
+- **What viewers can do.** Viewers can read, download, search, ask about, summarise, compare, extract from and analyse a shared document. They can't rename, reindex, reshare, see who else has access, or delete it; deleting only removes it from their own library.
+- **One access check for every path.** API routes, RAG retrieval (in SQL), chat attachments (filtered when the message is sent and again when the prompt is built), the conversation view and all chat tools use the same check. A document you can't read returns **404**, so ids can't be probed.
+- **Storage.** Files are stored under the owner's directory with random names. Downloads are sent as attachments with `nosniff` and a sandbox CSP; only images and PDFs display inline, so uploaded HTML or SVG can never run on Aria's origin.
+- **What leaves the server.** OCR runs locally. Document text goes to your configured model or embedding provider only when you use a feature that needs it (summaries, questions, comparison, extraction, analysis, generation, embeddings).
+
 ## Quick start (Docker)
 
 You need Docker Desktop (Windows or macOS) or Docker Engine (Linux).
@@ -269,7 +317,7 @@ Model IDs change over time. If a provider rejects a model name, update `backend/
 
 - **Chat:** token streaming over SSE, a stop button (partial answers are kept), regenerate, copy, rename/delete chats, history grouped by date, a scroll-to-bottom button, drag-drop/paste uploads.
 - **Agent mode** (the ✨ toggle): every answer gets a visible plan, tool calls and a self-check. Without the toggle, Aria still plans automatically for complex requests and verifies any answer that used tools.
-- **Documents:** PDF, DOCX, text and code files are extracted and chunked, and embedded too when embeddings are configured. Small files go straight into context; large ones are read through `search_documents`.
+- **Documents:** PDF, DOCX, XLSX, CSV, PPTX, text/code and images (with OCR) are extracted, chunked with page/slide/sheet locations and indexed for RAG. Small files go straight into context; large ones are read through the document tools. See [Document intelligence](#document-intelligence).
 - **Images:** sent to vision-capable models. Aria tells you if the selected model can't see images.
 - **Memory:** Aria proposes durable facts it learns and you approve them inline or under *Account → Memory*, where you can also search, correct, pin, archive, export, import and delete. See [Memory architecture](#memory-architecture).
 - **Long conversations:** older turns are condensed automatically into a rolling summary plus searchable sections, so details from far back can still be recalled.
@@ -300,17 +348,19 @@ cd frontend && npm install && npm run dev        # http://localhost:3000, proxie
 ## Tests
 
 ```bash
-cd backend && pytest            # 128 tests (incl. 10 autonomous-run scenarios: approval granted/denied,
+cd backend && pytest            # 142 tests (incl. 10 autonomous-run scenarios: approval granted/denied,
                                 # grounding guard, retry, re-plan, remediation, cancel, report): stream parsers (incl. thinking blocks), agent loop, reasoning
                                 # engine (analyzer, clarifier, planner, verifier, state, scratchpad privacy),
                                 # memory (privacy rules, scoring, rank fusion, extraction, compaction),
                                 # coding workspace (path safety, edits, git, checkpoints, sandbox commands,
                                 # approvals, code search), deep research (quote verification, citation
-                                # validation, conflicts, source selection, report, PDF), tools, SSRF guard,
+                                # validation, conflicts, source selection, report, PDF), documents (every
+                                # format, OCR, chunk locations, profiling, generation, citations, access
+                                # control between users), tools, SSRF guard,
                                 # chunking, PDF extraction, sandbox
 # Integration tests against real PostgreSQL + pgvector (load db/init/01-schema.sh into an
 # empty database first; skipped unless the URL is set):
-TEST_DATABASE_URL=postgresql://postgres@localhost:5432/aria_test pytest tests/test_memory_pg.py tests/test_workspace_pg.py tests/test_research_pg.py
+TEST_DATABASE_URL=postgresql://postgres@localhost:5432/aria_test pytest tests/test_memory_pg.py tests/test_workspace_pg.py tests/test_research_pg.py tests/test_documents_pg.py
 cd frontend && npm test         # SSE and diff parsers, citation linking
 ```
 

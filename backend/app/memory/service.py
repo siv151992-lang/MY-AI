@@ -476,7 +476,9 @@ async def run_maintenance() -> dict:
             for m, e in zip(missing, embs):
                 await store.set_embedding(m["id"], e)
             backfilled = len(missing)
-    return {"expired": len(removed), "embeddings_backfilled": backfilled}
+    from ..documents.service import backfill_embeddings
+    return {"expired": len(removed), "embeddings_backfilled": backfilled,
+            "document_chunks_embedded": await backfill_embeddings()}
 
 
 async def maintenance_loop(interval_s: float = 6 * 3600) -> None:

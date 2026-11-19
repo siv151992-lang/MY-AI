@@ -42,8 +42,10 @@ def _spawn(coro) -> None:
 
 
 async def _user_content(user_id: str, text: str, file_ids: list[str], vision: bool) -> tuple[dict, list[dict]]:
-    """Neutral user message (text + images) and document descriptors for the system prompt."""
-    files = await db.get_files(user_id, file_ids)
+    """Neutral user message (text + images) and document descriptors for the system prompt.
+    Attachments go through the document access check: ids the user can't read are dropped."""
+    from ..documents import access, store as doc_store
+    files = [await doc_store.get_doc(user_id, i) for i in await access.filter_readable(user_id, file_ids)]
     parts: list[dict] = []
     docs: list[dict] = []
     for f in files:
@@ -51,6 +53,9 @@ async def _user_content(user_id: str, text: str, file_ids: list[str], vision: bo
             if vision:
                 data = await asyncio.to_thread(Path(f["storage_path"]).read_bytes)
                 parts.append({"type": "image", "media_type": f["mime_type"], "data": base64.b64encode(data).decode()})
+            elif f.get("text_content"):
+                docs.append({"filename": f["filename"], "full_text": "(Text and description extracted from the image; "
+                                                                    "the selected model cannot see images.)\n" + f["text_content"][:FULL_TEXT_LIMIT]})
             else:
                 parts.append({"type": "text", "text": f"[Image '{f['filename']}' attached, but the selected model "
                                                       f"cannot see images. Tell the user to switch to a vision model.]"})

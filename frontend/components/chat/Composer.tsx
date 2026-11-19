@@ -10,7 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 
 type Pending = { key: string; name: string; progress: number; file?: FileRef; error?: string; preview?: string };
 
-const ACCEPT = ".pdf,.docx,.txt,.md,.csv,.json,.py,.js,.ts,.tsx,.jsx,.java,.kt,.go,.rs,.c,.cpp,.h,.cs,.rb,.php,.sql,.html,.css,.xml,.yaml,.yml,.toml,.sh,.log,image/png,image/jpeg,image/gif,image/webp";
+const ACCEPT = ".pdf,.docx,.xlsx,.pptx,.csv,.tsv,.txt,.md,.json,.py,.js,.ts,.tsx,.jsx,.java,.kt,.go,.rs,.c,.cpp,.h,.cs,.rb,.php,.sql,.html,.css,.xml,.yaml,.yml,.toml,.sh,.log,image/png,image/jpeg,image/gif,image/webp,image/tiff,image/bmp";
 
 export function Composer({ models, modelId, onModelChange, onSend, onStop, busy, agentMode, onAgentMode, prefill }: {
   models: ModelInfo[];

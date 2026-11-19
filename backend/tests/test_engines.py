@@ -11,7 +11,8 @@ from app.agent.tools.base import Tool, ToolContext, ToolRegistry
 from app.agent.tools.code import format_run_result
 from app.agent.tools.web import html_to_text, is_public_url
 from app.llm.formats import text_msg
-from app.services.documents import UnsupportedFile, chunk_text, classify, extract_text
+from app.documents.extract import UnsupportedFile, detect, extract
+from app.services.documents import chunk_text
 
 
 # ---------- json ----------
@@ -113,12 +114,13 @@ def test_chunking_covers_text_with_overlap():
     assert sum(len(c) for c in giant) >= 5000
 
 
-def test_extract_text_and_classify(tmp_path):
-    assert extract_text("a.py", b"print('hi')") == "print('hi')"
+def test_extract_text_and_detect(tmp_path):
+    assert extract("a.py", b"print('hi')").text() == "print('hi')"
     with pytest.raises(UnsupportedFile):
-        extract_text("a.exe", b"MZ\x90\x00")
-    assert classify("x.txt", "text/plain", b"\x89PNG\r\n\x1a\n") == "image"  # magic bytes win over name/MIME
-    assert classify("x.png", "image/png", b"hello") == "document"
+        extract("a.exe", b"MZ\x90\x00")
+    assert detect("x.txt", b"\x89PNG\r\n\x1a\n") == "image"  # magic bytes win over the name
+    with pytest.raises(UnsupportedFile):  # an image extension with non-image content is rejected, not guessed
+        detect("x.png", b"hello")
 
 
 def test_extract_pdf_text():
@@ -134,5 +136,5 @@ def test_extract_pdf_text():
     page[NameObject("/Contents")] = w._add_object(stream)
     buf = io.BytesIO()
     w.write(buf)
-    text = extract_text("report.pdf", buf.getvalue())
+    text = extract("report.pdf", buf.getvalue()).text()
     assert "[Page 1]" in text and "Quarterly revenue grew 12 percent" in text
