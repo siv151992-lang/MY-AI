@@ -5,3 +5,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 frontend/tsconfig.tsbuildinfo
+runtime/
+data/
+.aria-mode

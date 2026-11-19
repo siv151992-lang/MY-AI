@@ -79,13 +79,33 @@ if not errorlevel 1 (
   goto :fail
 )
 
-rem --- Already running? Just open it ------------------------------------------
+rem --- The Docker version of Aria uses the same ports: offer to stop it -----------
+set "DOCKER_ARIA="
+where docker >nul 2>&1 && for /f %%i in ('docker ps -q --filter "label=com.docker.compose.project=aria" 2^>nul') do set "DOCKER_ARIA=1"
+if defined DOCKER_ARIA (
+  echo.
+  echo [!] The Docker version of Aria is running and is using port 3000.
+  echo     It has to be stopped so this no-Docker version can start. Your Docker data is kept.
+  choice /c YN /m "    Stop the Docker version now"
+  if errorlevel 2 goto :fail
+  for /f %%i in ('docker ps -q --filter "label=com.docker.compose.project=aria"') do docker stop %%i >nul
+  echo [OK] Stopped the Docker version.
+)
+
+rem --- Already running? Just open it - but only if it is this version ------------
 if /i not "%CMD%"=="update" (
-  powershell -NoProfile -Command "try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 '%URL%/login' | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
+  rem The current version answers /api/setup with 401 (sign-in needed); older versions answer 404.
+  powershell -NoProfile -Command "try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 'http://127.0.0.1:%API_PORT%/api/setup' | Out-Null; exit 0 } catch { if ($_.Exception.Response.StatusCode.value__ -eq 401) { exit 0 } else { exit 1 } }" >nul 2>&1
   if not errorlevel 1 (
     echo [OK] Aria is already running at %URL%
     start "" "%URL%"
     goto :end
+  )
+  call :is_listening %WEB_PORT%
+  if defined LISTENING (
+    echo [*] An older Aria is still running - restarting it with this version...
+    call :stop_all
+    timeout /t 2 /nobreak >nul
   )
 )
 for %%P in (%WEB_PORT% %API_PORT% %PG_PORT%) do (
@@ -265,6 +285,11 @@ taskkill /FI "WINDOWTITLE eq Aria web*" /T /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq Aria backend*" /T /F >nul 2>&1
 if exist "%RT%\pgsql\bin\pg_ctl.exe" if exist "%DATA%\pgdata\postmaster.pid" "%RT%\pgsql\bin\pg_ctl.exe" stop -D "%DATA%\pgdata" -m fast -w >nul 2>&1
 taskkill /FI "WINDOWTITLE eq Aria database*" /T /F >nul 2>&1
+exit /b 0
+
+:is_listening
+set "LISTENING="
+netstat -ano | findstr /r /c:"127.0.0.1:%~1 .*LISTENING" /c:"0.0.0.0:%~1 .*LISTENING" /c:"\[::\]:%~1 .*LISTENING" >nul && set "LISTENING=1"
 exit /b 0
 
 :logs
