@@ -53,7 +53,7 @@ services:
       context: ./frontend
       args: { BACKEND_URL: http://backend:8000 }
     restart: unless-stopped
-    ports: ["3000:3000"]
+    ports: ["${ARIA_PORT:-3000}:3000"]   # set ARIA_PORT in .env if 3000 is taken
     depends_on: [backend]
     networks: [core]
 

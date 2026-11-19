@@ -155,6 +155,8 @@ docker compose up --build
 
 Then open **http://localhost:3000**, create an account and start chatting.
 
+> **Port 3000 already in use?** Set `ARIA_PORT=3100` (or any free port) in `.env` and open `http://localhost:3100` instead.
+
 > **Windows:** run the commands in PowerShell from the project folder. To generate a secret, run `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
 
 ### Configuration
