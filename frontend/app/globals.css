@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 48 33% 97%;
+    --foreground: 30 8% 15%;
+    --sidebar: 45 25% 94%;
+    --card: 0 0% 100%;
+    --card-foreground: 30 8% 15%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 30 8% 15%;
+    --primary: 15 55% 52%;
+    --primary-foreground: 0 0% 100%;
+    --brand: 15 55% 52%;
+    --secondary: 45 20% 91%;
+    --secondary-foreground: 30 8% 15%;
+    --muted: 45 18% 92%;
+    --muted-foreground: 30 5% 42%;
+    --accent: 45 20% 89%;
+    --accent-foreground: 30 8% 15%;
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 40 14% 86%;
+    --input: 40 14% 84%;
+    --ring: 15 55% 52%;
+    --radius: 0.75rem;
+  }
+  .dark {
+    --background: 60 3% 15%;
+    --foreground: 45 20% 92%;
+    --sidebar: 60 3% 12%;
+    --card: 60 3% 19%;
+    --card-foreground: 45 20% 92%;
+    --popover: 60 3% 19%;
+    --popover-foreground: 45 20% 92%;
+    --primary: 15 60% 58%;
+    --primary-foreground: 0 0% 100%;
+    --brand: 15 60% 58%;
+    --secondary: 60 3% 22%;
+    --secondary-foreground: 45 20% 92%;
+    --muted: 60 3% 21%;
+    --muted-foreground: 40 6% 64%;
+    --accent: 60 3% 24%;
+    --accent-foreground: 45 20% 92%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 60 3% 26%;
+    --input: 60 3% 30%;
+    --ring: 15 60% 58%;
+  }
+  * { @apply border-border; }
+  html, body { height: 100%; }
+  body { @apply bg-background text-foreground antialiased; font-feature-settings: "rlig" 1, "calt" 1; }
+  ::selection { background: hsl(var(--brand) / 0.25); }
+}
+
+/* Scrollbars */
+.thin-scroll { scrollbar-width: thin; scrollbar-color: hsl(var(--border)) transparent; }
+
+/* Markdown answer typography */
+.answer { @apply prose prose-stone max-w-none dark:prose-invert
+  prose-p:leading-7 prose-li:my-0.5 prose-headings:font-serif prose-headings:font-semibold
+  prose-a:text-brand prose-a:no-underline hover:prose-a:underline
+  prose-code:before:content-none prose-code:after:content-none
+  prose-pre:bg-transparent prose-pre:p-0 prose-pre:m-0; }
+.answer :not(pre) > code { @apply rounded-md bg-muted px-1.5 py-0.5 text-[0.85em] font-mono; }
+.answer table { @apply text-sm; }
+
+/* Streaming caret */
+.answer.streaming > :last-child::after { content: "▍"; margin-left: 2px; color: hsl(var(--brand)); animation: blink 1s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* highlight.js — light */
+.hljs { color: #383a42; }
+.hljs-comment, .hljs-quote { color: #a0a1a7; font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-formula { color: #a626a4; }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute, .hljs-meta .hljs-string { color: #50a14f; }
+.hljs-number, .hljs-literal, .hljs-built_in, .hljs-type, .hljs-attr, .hljs-variable, .hljs-template-variable { color: #986801; }
+.hljs-title, .hljs-section, .hljs-name, .hljs-selector-id, .hljs-selector-class { color: #4078f2; }
+.hljs-symbol, .hljs-bullet, .hljs-link, .hljs-meta { color: #0184bc; }
+.hljs-deletion { color: #e45649; }
+/* highlight.js — dark */
+.dark .hljs { color: #abb2bf; }
+.dark .hljs-comment, .dark .hljs-quote { color: #7f848e; }
+.dark .hljs-keyword, .dark .hljs-selector-tag, .dark .hljs-doctag { color: #c678dd; }
+.dark .hljs-string, .dark .hljs-regexp, .dark .hljs-addition, .dark .hljs-attribute { color: #98c379; }
+.dark .hljs-number, .dark .hljs-literal, .dark .hljs-built_in, .dark .hljs-type, .dark .hljs-attr, .dark .hljs-variable { color: #d19a66; }
+.dark .hljs-title, .dark .hljs-section, .dark .hljs-name, .dark .hljs-selector-id, .dark .hljs-selector-class { color: #61afef; }
+.dark .hljs-symbol, .dark .hljs-bullet, .dark .hljs-link, .dark .hljs-meta { color: #56b6c2; }
+.dark .hljs-deletion { color: #e06c75; }

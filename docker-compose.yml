@@ -1,0 +1,66 @@
+name: aria
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: aria
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aria}
+      POSTGRES_DB: aria
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aria -d aria"]
+      interval: 5s
+      retries: 20
+    networks: [core]
+
+  sandbox:
+    build: ./sandbox
+    restart: unless-stopped
+    environment:
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:?set SANDBOX_TOKEN in .env}
+    read_only: true
+    tmpfs: ["/tmp:size=256m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 1.0
+    networks: [sandbox]   # internal-only network: no internet access
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://aria:${POSTGRES_PASSWORD:-aria}@db:5432/aria
+      SANDBOX_URL: http://sandbox:8800
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      db: { condition: service_healthy }
+      sandbox: { condition: service_started }
+    extra_hosts: ["host.docker.internal:host-gateway"]   # lets the backend reach Ollama on your machine
+    networks: [core, sandbox]
+
+  frontend:
+    build:
+      context: ./frontend
+      args: { BACKEND_URL: http://backend:8000 }
+    restart: unless-stopped
+    ports: ["3000:3000"]
+    depends_on: [backend]
+    networks: [core]
+
+networks:
+  core: {}
+  sandbox: { internal: true }
+
+volumes:
+  pgdata: {}
+  uploads: {}
