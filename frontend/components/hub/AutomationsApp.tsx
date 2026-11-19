@@ -7,6 +7,7 @@ import { ArrowDown, ArrowUp, Copy, Loader2, Play, Plus, RefreshCw, Trash2, Workf
 import { api } from "@/lib/api";
 import { ago, type Automation, type AutomationRun, type AutomationStep, type CustomAgent, type Integration, type Skill } from "@/lib/hub";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/chat/Markdown";
 import { Card, ErrorNote, Field, inputCls, ModelSelect, Shell, StatusPill, ToolPicker } from "./Shell";
 import { useCatalog } from "./useCatalog";
@@ -182,10 +183,10 @@ function Editor({ id }: { id: string | null }) {
           <Card key={i} className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium">{i + 1}.</span>
-              <select className={`${inputCls} w-auto`} value={s.type} onChange={(e) => setStep(i, { type: e.target.value })}>
+              <select className={cn(inputCls, "w-44 shrink-0")} value={s.type} onChange={(e) => setStep(i, { type: e.target.value })}>
                 {STEP_TYPES.map((t) => <option key={t.type} value={t.type}>{t.label}</option>)}
               </select>
-              <input className={`${inputCls} flex-1`} placeholder="Step title (optional)" value={s.title ?? ""} onChange={(e) => setStep(i, { title: e.target.value })} />
+              <input className={cn(inputCls, "min-w-0 flex-1")} placeholder="Step title (optional)" value={s.title ?? ""} onChange={(e) => setStep(i, { title: e.target.value })} />
               <Button size="icon-sm" variant="ghost" disabled={i === 0} onClick={() => move(i, -1)} title="Move up"><ArrowUp /></Button>
               <Button size="icon-sm" variant="ghost" disabled={i === steps.length - 1} onClick={() => move(i, 1)} title="Move down"><ArrowDown /></Button>
               <Button size="icon-sm" variant="ghost" disabled={steps.length === 1} onClick={() => setA({ ...a, steps: steps.filter((_, j) => j !== i) })} title="Remove"><X /></Button>

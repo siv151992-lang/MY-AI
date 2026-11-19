@@ -41,9 +41,9 @@ export function AnalyticsApp() {
         <Card>
           <h2 className="mb-3 font-medium">Calls per day</h2>
           {d.by_day.length === 0 ? <p className="text-sm text-muted-foreground">No model calls in this period.</p> : (
-            <div className="flex h-36 items-end gap-1">
+            <div className="flex h-36 items-stretch gap-1">
               {d.by_day.map((x: any) => (
-                <div key={x.day} className="group relative flex flex-1 flex-col justify-end" title={`${x.day}: ${x.calls} calls, ${x.errors} errors`}>
+                <div key={x.day} className="group relative flex h-full max-w-16 flex-1 flex-col justify-end" title={`${x.day}: ${x.calls} calls, ${x.errors} errors`}>
                   <div className="rounded-t bg-brand/70" style={{ height: `${(x.calls - x.errors) / maxDay * 100}%` }} />
                   {x.errors > 0 && <div className="bg-red-500" style={{ height: `${x.errors / maxDay * 100}%` }} />}
                 </div>))}
