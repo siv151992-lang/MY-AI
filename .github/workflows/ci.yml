@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16  # same image as docker-compose.yml
+        env:
+          POSTGRES_USER: aria
+          POSTGRES_PASSWORD: aria
+          POSTGRES_DB: aria_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U aria -d aria_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPASSWORD: aria
+      POSTGRES_USER: aria
+      POSTGRES_DB: aria_test
+      # Enables the PostgreSQL + pgvector integration tests (skipped when unset)
+      TEST_DATABASE_URL: postgresql://aria:aria@localhost:5432/aria_test
+      JWT_SECRET: ci-only-secret-not-used-anywhere-else-0123456789
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"  # matches backend/Dockerfile
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Load database schema
+        run: bash ../db/init/01-schema.sh
+      - run: python -m pytest -q -rs
+
+  frontend:
+    name: Frontend typecheck, tests and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"  # matches frontend/Dockerfile
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
