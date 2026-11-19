@@ -328,7 +328,7 @@ Open **Agent team** in the sidebar (`/team`), describe a goal, and a team of spe
 
 You need Docker Desktop (Windows or macOS) or Docker Engine (Linux).
 
-**Windows shortcut:** double-click `aria.bat`. It creates `.env` with random secrets, opens it in Notepad so you can add a model API key, starts everything and opens the browser. `aria.bat stop`, `aria.bat logs`, `aria.bat status` and `aria.bat update` cover the rest.
+**Windows, one click:** download `aria.bat` and double-click it from anywhere. If it isn't inside the project folder it downloads Aria into `%USERPROFILE%\Aria`, starts Docker Desktop if needed, creates `.env` with random secrets, opens it in Notepad for your model API key, starts everything, opens the browser and adds an **Aria** shortcut to your Desktop. `aria.bat stop`, `logs`, `status` and `update` (downloads the latest code, keeping your `.env`) cover the rest.
 
 ```bash
 cp .env.example .env
