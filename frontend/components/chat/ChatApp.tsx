@@ -16,6 +16,7 @@ const key = uid;
 function fromServer(m: ServerMessage): ChatMessage {
   return {
     key: m.id, id: m.id, role: m.role, content: m.content, files: m.files,
+    analysis: m.meta?.analysis ?? null, clarification: m.meta?.clarification,
     plan: m.meta?.plan ?? null, tools: m.meta?.tools ?? [], verification: m.meta?.verification ?? null,
     revised: (m.meta?.revisions ?? 0) > 0, interrupted: m.meta?.interrupted, model: m.meta?.model,
   };
@@ -128,6 +129,11 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
         setMessages((ms) => ms.map((m, i) => (i === ms.length - 2 && m.role === "user" ? { ...m, id: ev.message.id } : m)));
         break;
       case "status": patchLast((m) => ({ ...m, status: ev.text })); break;
+      case "analysis": {
+        const { type, ...a } = ev;
+        patchLast((m) => ({ ...m, analysis: a as any }));
+        break;
+      }
       case "plan": patchLast((m) => ({ ...m, plan: ev.steps })); break;
       case "token": patchLast((m) => ({ ...m, content: m.content + ev.text, status: null })); break;
       case "tool_start":

@@ -24,6 +24,7 @@ CREATE TABLE conversations (
   model_id    TEXT,
   summary     TEXT,                       -- rolling summary of older turns (long-context support)
   summarized_upto INTEGER NOT NULL DEFAULT 0,
+  state       JSONB NOT NULL DEFAULT '{}'::jsonb, -- structured working memory (reasoning engine)
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );

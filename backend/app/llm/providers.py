@@ -7,6 +7,7 @@ from typing import AsyncIterator
 
 import httpx
 
+from ..agent.reasoning.privacy import THINKING_BUDGET
 from .formats import (AnthropicStreamParser, OpenAIStreamParser, ProviderError, to_anthropic, to_openai,
                       tools_to_anthropic, tools_to_openai)
 
@@ -15,10 +16,16 @@ RETRY_STATUSES = {408, 429, 500, 502, 503, 504, 529}
 
 
 class LLMProvider:
+    """Uniform streaming interface.
+
+    `reasoning` = {"mode": "anthropic_thinking"|"openai_effort"|"scratchpad", "effort": "none"|"low"|"medium"|"high"}.
+    Providers apply the modes they support natively and ignore the rest (scratchpad is handled by the orchestrator).
+    """
     name = "base"
 
     async def stream(self, *, model: str, system: str, messages: list[dict], tools: list[dict] | None = None,
-                     max_tokens: int = 4096, temperature: float | None = None) -> AsyncIterator[dict]:
+                     max_tokens: int = 4096, temperature: float | None = None,
+                     reasoning: dict | None = None) -> AsyncIterator[dict]:
         raise NotImplementedError
         yield {}  # pragma: no cover
 
@@ -74,12 +81,17 @@ class AnthropicProvider(LLMProvider):
     def __init__(self, api_key: str, base_url: str):
         self.api_key, self.base_url = api_key, base_url.rstrip("/")
 
-    async def stream(self, *, model, system, messages, tools=None, max_tokens=4096, temperature=None):
+    async def stream(self, *, model, system, messages, tools=None, max_tokens=4096, temperature=None, reasoning=None):
         body: dict = {"model": model, "system": system, "messages": to_anthropic(messages),
                       "max_tokens": max_tokens, "stream": True}
         if tools:
             body["tools"] = tools_to_anthropic(tools)
-        if temperature is not None:
+        effort = (reasoning or {}).get("effort", "none")
+        if (reasoning or {}).get("mode") == "anthropic_thinking" and effort in THINKING_BUDGET:
+            budget = THINKING_BUDGET[effort]
+            body["thinking"] = {"type": "enabled", "budget_tokens": budget}
+            body["max_tokens"] = max_tokens + budget  # budget counts toward max_tokens
+        elif temperature is not None:  # temperature cannot be combined with extended thinking
             body["temperature"] = temperature
         headers = {"x-api-key": self.api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
         async for ev in self._post_stream(f"{self.base_url}/v1/messages", headers, body, AnthropicStreamParser()):
@@ -99,14 +111,17 @@ class OpenAICompatProvider(LLMProvider):
             h["authorization"] = f"Bearer {self.api_key}"
         return h
 
-    async def stream(self, *, model, system, messages, tools=None, max_tokens=4096, temperature=None):
+    async def stream(self, *, model, system, messages, tools=None, max_tokens=4096, temperature=None, reasoning=None):
         body: dict = {"model": model, "messages": to_openai(system, messages), "stream": True,
                       "max_completion_tokens" if self.name == "openai" else "max_tokens": max_tokens}
         if self.send_usage_option:
             body["stream_options"] = {"include_usage": True}
         if tools:
             body["tools"] = tools_to_openai(tools)
-        if temperature is not None:
+        effort = (reasoning or {}).get("effort", "none")
+        if (reasoning or {}).get("mode") == "openai_effort" and effort != "none":
+            body["reasoning_effort"] = effort  # reasoning models: hidden reasoning, no temperature
+        elif temperature is not None:
             body["temperature"] = temperature
         async for ev in self._post_stream(f"{self.base_url}/chat/completions", self._headers(), body,
                                           OpenAIStreamParser()):

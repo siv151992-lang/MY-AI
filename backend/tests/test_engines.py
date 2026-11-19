@@ -3,7 +3,7 @@ import io
 
 import pytest
 
-from app.agent import memory_engine, planner, verifier
+from app.agent import memory_engine
 from app.agent.jsonutil import extract_json
 from app.agent.prompts import build_system_prompt
 from app.agent.tools.base import Tool, ToolContext, ToolRegistry
@@ -13,30 +13,7 @@ from app.llm.formats import text_msg
 from app.services.documents import UnsupportedFile, chunk_text, classify, extract_text
 
 
-# ---------- planning ----------
-def test_needs_plan_heuristics():
-    assert planner.needs_plan("hi", agent_mode=True, has_documents=False)
-    assert not planner.needs_plan("what is 2+2?", agent_mode=False, has_documents=False)
-    assert planner.needs_plan("Research and compare the three most popular vector databases for production use",
-                              agent_mode=False, has_documents=False)
-    assert planner.needs_plan("word " * 130, agent_mode=False, has_documents=False)
-
-
-def test_parse_plan_json_and_fallback():
-    assert planner.parse_plan('Sure! {"steps": ["a", "b"]}') == ["a", "b"]
-    assert planner.parse_plan("1. Search docs\n2) Run code\n- Answer") == ["Search docs", "Run code", "Answer"]
-
-
-# ---------- verification ----------
-def test_parse_verdict():
-    assert verifier.parse_verdict('{"ok": true, "issues": []}') == {"ok": True, "issues": []}
-    v = verifier.parse_verdict('{"ok": false, "issues": ["wrong number"]}')
-    assert v == {"ok": False, "issues": ["wrong number"]}
-    assert verifier.parse_verdict("garbage")["ok"] is True
-    assert not verifier.should_verify(False, False, "x" * 500)
-    assert verifier.should_verify(True, False, "x" * 500)
-
-
+# ---------- json ----------
 def test_extract_json_variants():
     assert extract_json('```json\n{"a":1}\n```') == {"a": 1}
     assert extract_json('text before [1,2] after') == [1, 2]
@@ -70,11 +47,12 @@ def test_split_history_keeps_recent_within_budget_and_starts_on_user():
 
 def test_system_prompt_includes_context():
     s = build_system_prompt(user_name="Siva", memories=["Uses Java"], conversation_summary="Earlier: X",
+                            conversation_state="Goals:\n- ship v2",
                             documents=[{"filename": "a.txt", "full_text": "hello"},
                                        {"filename": "big.pdf", "excerpt": "start"}],
-                            plan=["Search", "Answer"], tool_names=["web_search"])
+                            reasoning_guidance="GUIDANCE-BLOCK", tool_names=["web_search"])
     for needle in ("Siva", "Uses Java", "Earlier: X", '<document name="a.txt">', "search_documents",
-                   "1. Search", "web_search"):
+                   "ship v2", "GUIDANCE-BLOCK", "web_search"):
         assert needle in s
 
 

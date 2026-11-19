@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AlertTriangle, ChevronRight, Code2, FileSearch, Globe, ListChecks, Loader2, Search, ShieldCheck,
-  Brain, Wrench } from "lucide-react";
+  Brain, Wrench, Lightbulb } from "lucide-react";
 import type { ChatMessage, ToolRun } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -46,12 +46,46 @@ function ToolRow({ t }: { t: ToolRun }) {
   );
 }
 
+function understandingWorthShowing(a: ChatMessage["analysis"]) {
+  return !!a && (a.parts.length > 1 || a.assumptions.length > 0 || !!a.interpretation || a.missing_info.length > 0);
+}
+
+function Understanding({ a, defaultOpen }: { a: NonNullable<ChatMessage["analysis"]>; defaultOpen: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const notes = [...(a.interpretation ? [`Interpreted as: ${a.interpretation}`] : []),
+    ...a.assumptions.map((x) => `Assuming ${x.charAt(0).toLowerCase()}${x.slice(1)}`)];
+  return (
+    <div>
+      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm font-medium hover:bg-accent/60">
+        <Lightbulb className="h-3.5 w-3.5 text-brand" /> Understanding
+        <span className="text-xs font-normal text-muted-foreground">
+          {a.task_types.join(" · ")}{a.parts.length > 1 ? ` · ${a.parts.length} parts` : ""}
+        </span>
+        <ChevronRight className={cn("ml-auto h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
+      </button>
+      {open && (
+        <div className="mb-1 ml-8 space-y-1.5 text-sm text-muted-foreground animate-fade-up">
+          {a.parts.length > 1 && (
+            <ul className="list-disc space-y-0.5 pl-4">{a.parts.map((p, i) => <li key={i}>{p}</li>)}</ul>
+          )}
+          {notes.map((n, i) => <p key={i} className="italic">{n}</p>)}
+          {a.missing_info.length > 0 && (
+            <p className="text-amber-600 dark:text-amber-400">Missing: {a.missing_info.join("; ")}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AgentActivity({ m }: { m: ChatMessage }) {
   const [planOpen, setPlanOpen] = useState(true);
-  const hasActivity = (m.plan && m.plan.length) || (m.tools && m.tools.length) || m.status || m.verification;
+  const showUnderstanding = understandingWorthShowing(m.analysis);
+  const hasActivity = showUnderstanding || (m.plan && m.plan.length) || (m.tools && m.tools.length) || m.status || m.verification;
   if (!hasActivity) return null;
   return (
     <div className="mb-3 space-y-1 rounded-xl border bg-card/50 p-2">
+      {showUnderstanding && <Understanding a={m.analysis!} defaultOpen={!!m.streaming} />}
       {m.plan && m.plan.length > 0 && (
         <div>
           <button onClick={() => setPlanOpen(!planOpen)} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm font-medium hover:bg-accent/60">

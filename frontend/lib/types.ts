@@ -17,12 +17,24 @@ export type ToolRun = {
 
 export type Verification = { ok: boolean; issues: string[] } | null;
 
+/** What the reasoning engine understood — never its private deliberation. */
+export type Analysis = {
+  task_types: string[];
+  complexity: "simple" | "moderate" | "complex";
+  parts: string[];
+  assumptions: string[];
+  missing_info: string[];
+  interpretation: string | null;
+} | null;
+
 export type ChatMessage = {
   key: string; // stable client key
   id?: string;
   role: "user" | "assistant";
   content: string;
   files?: FileRef[];
+  analysis?: Analysis;
+  clarification?: boolean;
   plan?: string[] | null;
   tools?: ToolRun[];
   verification?: Verification;
@@ -42,6 +54,8 @@ export type ServerMessage = {
   file_ids: string[];
   files?: FileRef[];
   meta: {
+    analysis?: Analysis;
+    clarification?: boolean;
     plan?: string[] | null;
     tools?: ToolRun[];
     verification?: Verification;

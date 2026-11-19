@@ -8,10 +8,14 @@ Parts:
   {"type": "image", "media_type": str, "data": base64-str}
   {"type": "tool_call", "id": str, "name": str, "input": dict}          (assistant)
   {"type": "tool_result", "tool_call_id": str, "content": str, "is_error": bool}  (user)
+  {"type": "thinking", "thinking": str, "signature": str}      (assistant; private, provider-native)
+  {"type": "redacted_thinking", "data": str}                    (assistant; private, provider-native)
 Stream events:
   {"type": "text", "text": str}
   {"type": "tool_call", "id": str, "name": str, "input": dict}
   {"type": "done", "stop_reason": str, "usage": {"input_tokens": int, "output_tokens": int}}
+  {"type": "thinking_start"}                               (progress signal only — no content)
+  {"type": "thinking_block", "part": <thinking part>}      (private; kept server-side for tool loops)
 """
 from __future__ import annotations
 
@@ -57,6 +61,10 @@ def to_anthropic(messages: list[dict]) -> list[dict]:
             elif t == "tool_result":
                 blocks.append({"type": "tool_result", "tool_use_id": p["tool_call_id"], "content": p["content"],
                                "is_error": bool(p.get("is_error"))})
+            elif t == "thinking":
+                blocks.append({"type": "thinking", "thinking": p["thinking"], "signature": p["signature"]})
+            elif t == "redacted_thinking":
+                blocks.append({"type": "redacted_thinking", "data": p["data"]})
         if not blocks:
             blocks = [{"type": "text", "text": "(empty)"}]
         # Anthropic requires strictly alternating roles: merge consecutive same-role messages.
@@ -94,17 +102,30 @@ class AnthropicStreamParser:
             self.usage["input_tokens"] = u.get("input_tokens", 0)
         elif typ == "content_block_start":
             cb = data["content_block"]
-            self.blocks[data["index"]] = {"type": cb["type"], "id": cb.get("id"), "name": cb.get("name"), "json": ""}
+            self.blocks[data["index"]] = {"type": cb["type"], "id": cb.get("id"), "name": cb.get("name"), "json": "",
+                                          "thinking": cb.get("thinking", ""), "signature": cb.get("signature", ""),
+                                          "data": cb.get("data", "")}
+            if cb["type"] in ("thinking", "redacted_thinking"):
+                yield {"type": "thinking_start"}
         elif typ == "content_block_delta":
             d = data["delta"]
             if d["type"] == "text_delta":
                 yield {"type": "text", "text": d["text"]}
             elif d["type"] == "input_json_delta":
                 self.blocks[data["index"]]["json"] += d.get("partial_json", "")
+            elif d["type"] == "thinking_delta":
+                self.blocks[data["index"]]["thinking"] += d.get("thinking", "")
+            elif d["type"] == "signature_delta":
+                self.blocks[data["index"]]["signature"] += d.get("signature", "")
         elif typ == "content_block_stop":
             b = self.blocks.pop(data["index"], None)
             if b and b["type"] == "tool_use":
                 yield {"type": "tool_call", "id": b["id"], "name": b["name"], "input": _loads(b["json"])}
+            elif b and b["type"] == "thinking":
+                yield {"type": "thinking_block",
+                       "part": {"type": "thinking", "thinking": b["thinking"], "signature": b["signature"]}}
+            elif b and b["type"] == "redacted_thinking":
+                yield {"type": "thinking_block", "part": {"type": "redacted_thinking", "data": b["data"]}}
         elif typ == "message_delta":
             self.stop_reason = data.get("delta", {}).get("stop_reason") or self.stop_reason
             self.usage["output_tokens"] = data.get("usage", {}).get("output_tokens", self.usage["output_tokens"])

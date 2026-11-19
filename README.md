@@ -28,6 +28,25 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 └──────────────────────────────────────────────┘  └────────────────────────────────┘
 ```
 
+## Reasoning engine
+
+The reasoning engine lives in `backend/app/agent/reasoning/`. It is modular, and every component works with any provider:
+
+| Component | File | What it does |
+|---|---|---|
+| Analyzer | `analyzer.py` | Before answering, it splits the request into **parts**, classifies the task (math, logic, analytical, technical, factual, creative), and spots **missing information** and **ambiguity**. It also decides how much effort and verification the task needs. Greetings and short factual questions skip this step and answer straight away. |
+| Clarifier | `clarifier.py` | Asks a short question **only** when a wrong guess would be costly or required information is missing. Otherwise it goes ahead and states its interpretation and assumptions. It never asks twice in a row. |
+| Planner | `planner.py` | Breaks the task into subtasks, each with a method (tool or reasoning) and a completion check. `ensure_coverage` adds a subtask for any part the plan skipped. |
+| Strategies | `strategies.py` | Guidance for each domain: math is computed and checked with `run_python`, logic is tested against counterexamples, analysis is driven by criteria and trade-offs, technical work is reproduced and tested. You can add new domains with `register_strategy`. |
+| Verifier | `verifier.py` | An independent check for coverage (every part answered), correctness, grounding and honesty about gaps, plus domain-specific checks. If a check fails, the answer is revised automatically. |
+| Conversation state | `context.py` | Keeps a structured record of each chat (goals, constraints, decisions, key facts, artifacts, open questions), updates it after every turn and includes it in each prompt, so long conversations stay consistent. |
+| Private reasoning | `privacy.py` | Models reason privately. Claude uses native extended thinking (thinking blocks stay on the server). OpenAI o-series models use `reasoning_effort`. Any other model uses a `<scratchpad>` that is stripped from the stream before anything reaches the browser or the database. Answers give **concise justifications**, not the model's internal deliberation. |
+| Engine | `engine.py` | Combines the components above. The analyzer, planner and verifier are interfaces (Protocols), so you can swap in your own. |
+
+Effort scales with complexity: no extra reasoning for simple tasks, low or medium for moderate ones, high for complex ones, and math and logic always go one level higher. Set each model's reasoning mode with the `"reasoning"` field in `models.json`.
+
+In the chat, an **Understanding** panel shows the parts the request was split into and any interpretation, assumptions or missing information, followed by the plan, the tool calls and the self-check result.
+
 ## Quick start (Docker)
 
 You need Docker Desktop (Windows or macOS) or Docker Engine (Linux).
@@ -90,8 +109,9 @@ cd frontend && npm install && npm run dev        # http://localhost:3000, proxie
 ## Tests
 
 ```bash
-cd backend && pytest            # 33 tests: stream parsers, format converters, agent loop, planner,
-                                # verifier, memory, tools, SSRF guard, chunking, PDF extraction, sandbox
+cd backend && pytest            # 47 tests: stream parsers (incl. thinking blocks), agent loop, reasoning
+                                # engine (analyzer, clarifier, planner, verifier, state, scratchpad privacy),
+                                # memory, tools, SSRF guard, chunking, PDF extraction, sandbox
 cd frontend && npm test         # SSE parser
 ```
 
@@ -101,5 +121,5 @@ The orchestrator tests use a scripted provider *in the test suite only*, so plan
 
 - Put it behind HTTPS (Caddy, nginx or Traefik), set `COOKIE_SECURE=true`, and set `CORS_ORIGINS` to your domain.
 - Scale the backend horizontally: it is stateless apart from the in-memory rate limiter, which you can move to Redis for multiple replicas. Store uploads on shared storage (S3 or a shared volume).
-- Use managed Postgres with pgvector, and add a schema migration tool (for example Alembic or sqitch) before changing the schema.
+- Small schema changes are applied automatically at startup (`db.MIGRATIONS`, idempotent). Use managed Postgres with pgvector, and add a schema migration tool (for example Alembic or sqitch) before changing the schema.
 - For stronger sandbox isolation, run it under gVisor (`runtime: runsc`) or Firecracker.

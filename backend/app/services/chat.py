@@ -11,6 +11,8 @@ from .. import db
 from ..agent import memory_engine
 from ..agent.orchestrator import AgentConfig, run_agent
 from ..agent.prompts import build_system_prompt
+from ..agent.reasoning import ReasoningEngine
+from ..agent.reasoning.context import render_state, update_state
 from ..agent.tools.base import ToolContext, ToolRegistry
 from ..agent.tools.code import make_code_tool
 from ..agent.tools.knowledge import make_knowledge_tools
@@ -121,22 +123,27 @@ async def respond(*, user: dict, conv: dict, text: str, file_ids: list[str], mod
     history, summary = await _history(user["id"], conv, prior)
     memories = await memory_engine.retrieve_memories(user["id"], text)
     tools = build_tools()
+    state = conv.get("state") or {}
+    state_text = render_state(state)
+    last_asked = bool(prior and prior[-1]["role"] == "assistant" and (prior[-1].get("meta") or {}).get("clarification"))
 
-    def build_system(plan):
+    def build_system(guidance: str) -> str:
         return build_system_prompt(user_name=user.get("name", ""), memories=memories, conversation_summary=summary,
-                                   documents=docs, plan=plan, tool_names=tools.names() if spec.tools else [])
+                                   conversation_state=state_text, documents=docs, reasoning_guidance=guidance,
+                                   tool_names=tools.names() if spec.tools else [])
 
-    cfg = AgentConfig(model=spec.model, max_tokens=spec.max_tokens, utility_model=uspec.model, use_tools=spec.tools,
-                      max_steps=s.max_agent_steps, max_revisions=s.max_revisions, agent_mode=agent_mode,
-                      has_documents=bool(docs))
+    engine = ReasoningEngine.default(registry.provider_for(uspec), uspec.model)
+    cfg = AgentConfig(model=spec.model, max_tokens=spec.max_tokens, reasoning_mode=spec.reasoning,
+                      use_tools=spec.tools, max_steps=s.max_agent_steps, max_revisions=s.max_revisions,
+                      agent_mode=agent_mode, has_documents=bool(docs))
     ctx = ToolContext(user_id=user["id"], conversation_id=conv["id"], file_ids=file_ids)
 
     final = None
     partial = ""
     try:
-        async for ev in run_agent(llm=llm, utility_llm=registry.provider_for(uspec), cfg=cfg,
-                                  build_system=build_system, history=history, user_message=user_msg,
-                                  tools=tools, ctx=ctx):
+        async for ev in run_agent(llm=llm, engine=engine, cfg=cfg, build_system=build_system, history=history,
+                                  user_message=user_msg, tools=tools, ctx=ctx, state_text=state_text,
+                                  last_assistant_asked=last_asked):
             if ev["type"] == "token":
                 partial += ev["text"]
             elif ev["type"] == "reset":
@@ -163,3 +170,14 @@ async def respond(*, user: dict, conv: dict, text: str, file_ids: list[str], mod
         if title:
             yield {"type": "title", "title": title}
     _spawn(memory_engine.extract_and_store(user["id"], conv["id"], text, final["content"]))
+    _spawn(_update_state(user["id"], conv["id"], state, text, final["content"]))
+
+
+async def _update_state(user_id: str, conv_id: str, state: dict, user_text: str, answer: str) -> None:
+    """Keep the conversation's structured working memory current (long-conversation coherence)."""
+    try:
+        spec = registry.utility_model()
+        new_state = await update_state(registry.provider_for(spec), spec.model, state, user_text, answer)
+        await db.update_conversation(user_id, conv_id, state=new_state)
+    except Exception:
+        log.exception("conversation state update failed")

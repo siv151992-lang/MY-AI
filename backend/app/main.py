@@ -23,6 +23,7 @@ async def lifespan(app: FastAPI):
     s = get_settings()
     s.upload_dir.mkdir(parents=True, exist_ok=True)
     await db.connect(s.database_url)
+    await db.migrate()
     models = registry.available_models()
     log.info("Providers: %s | models: %s", list(registry.providers()), [m.id for m in models])
     if not models:

@@ -93,7 +93,7 @@ async def get_conversation(user_id: str, conv_id: str) -> dict | None:
 
 
 async def update_conversation(user_id: str, conv_id: str, **fields: Any) -> None:
-    allowed = {"title", "model_id", "summary", "summarized_upto"}
+    allowed = {"title", "model_id", "summary", "summarized_upto", "state"}
     sets, args = [], []
     for k, v in fields.items():
         if k in allowed:
@@ -105,6 +105,18 @@ async def update_conversation(user_id: str, conv_id: str, **fields: Any) -> None
     await pool().execute(
         f"UPDATE conversations SET {', '.join(sets)}, updated_at=now() WHERE id=${len(args)-1} AND user_id=${len(args)}",
         *args)
+
+
+MIGRATIONS = [
+    # 002 — reasoning engine: structured conversation state
+    "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS state JSONB NOT NULL DEFAULT '{}'::jsonb",
+]
+
+
+async def migrate() -> None:
+    async with pool().acquire() as c:
+        for stmt in MIGRATIONS:
+            await c.execute(stmt)
 
 
 async def touch_conversation(conv_id: str) -> None:

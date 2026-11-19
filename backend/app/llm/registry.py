@@ -17,6 +17,7 @@ class ModelSpec:
     vision: bool
     tools: bool
     max_tokens: int
+    reasoning: str = "scratchpad"  # "anthropic_thinking" | "openai_effort" | "scratchpad" | "none"
 
 
 @lru_cache
