@@ -1,5 +1,7 @@
 FROM python:3.12-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    PIP_DEFAULT_TIMEOUT=120 PIP_RETRIES=10 PIP_DISABLE_PIP_VERSION_CHECK=1
+# Long timeouts + retries: package downloads on slow or flaky connections stall instead of failing the build
 # Toolchains for the coding workspace (the running container has no internet, so everything is installed here)
 # Download Debian packages over HTTPS (some networks block plain HTTP on port 80) and retry on flaky links
 RUN set -eux; \

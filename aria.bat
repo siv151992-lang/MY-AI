@@ -147,7 +147,21 @@ rem --- Build and start --------------------------------------------------------
 echo [*] Starting Aria. The first time this downloads and builds everything and can take 5-15 minutes...
 %DC% up -d --build
 if errorlevel 1 (
-  echo [X] Docker could not start Aria. See the messages above.
+  rem Most build failures are network hiccups while downloading packages; finished steps are cached, so retry
+  echo.
+  echo [!] The build failed - usually a slow or interrupted download. Trying again in 10 seconds...
+  timeout /t 10 /nobreak >nul
+  %DC% build
+  if not errorlevel 1 %DC% up -d
+)
+if errorlevel 1 (
+  echo.
+  echo [!] Still failing. Trying one last time, one image at a time...
+  %DC% build backend && %DC% build sandbox && %DC% build frontend && %DC% up -d
+)
+if errorlevel 1 (
+  echo [X] Docker could not build Aria. This is usually the internet connection: check it and run this file again.
+  echo     Steps that already finished are kept, so the next try is faster. Or run Aria without Docker: "aria.bat native"
   goto :fail
 )
 
