@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, ChevronDown, FileText, Loader2, Paperclip, Sparkles, Square, X } from "lucide-react";
+import { ArrowUp, ChevronDown, FileText, Loader2, Paperclip, Route as RouteIcon, Sparkles, Square, Wand2, X } from "lucide-react";
+import type { Skill } from "@/lib/hub";
+import { VoiceButton } from "@/components/hub/VoiceButton";
 import { uploadFile } from "@/lib/api";
 import type { FileRef, ModelInfo } from "@/lib/types";
 import { cn, uid } from "@/lib/utils";
@@ -12,7 +14,9 @@ type Pending = { key: string; name: string; progress: number; file?: FileRef; er
 
 const ACCEPT = ".pdf,.docx,.xlsx,.pptx,.csv,.tsv,.txt,.md,.json,.py,.js,.ts,.tsx,.jsx,.java,.kt,.go,.rs,.c,.cpp,.h,.cs,.rb,.php,.sql,.html,.css,.xml,.yaml,.yml,.toml,.sh,.log,image/png,image/jpeg,image/gif,image/webp,image/tiff,image/bmp";
 
-export function Composer({ models, modelId, onModelChange, onSend, onStop, busy, agentMode, onAgentMode, prefill }: {
+export const AUTO_MODEL = "auto";
+
+export function Composer({ models, modelId, onModelChange, onSend, onStop, busy, agentMode, onAgentMode, prefill, skills = [], skillId = null, onSkill }: {
   models: ModelInfo[];
   modelId: string | null;
   onModelChange: (id: string) => void;
@@ -22,6 +26,9 @@ export function Composer({ models, modelId, onModelChange, onSend, onStop, busy,
   agentMode: boolean;
   onAgentMode: (v: boolean) => void;
   prefill?: { text: string; n: number };
+  skills?: Skill[];
+  skillId?: string | null;
+  onSkill?: (id: string | null) => void;
 }) {
   const [text, setText] = useState("");
   const [pending, setPending] = useState<Pending[]>([]);
@@ -29,6 +36,7 @@ export function Composer({ models, modelId, onModelChange, onSend, onStop, busy,
   const ta = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const model = models.find((m) => m.id === modelId);
+  const skill = skills.find((s) => s.id === skillId);
   const uploading = pending.some((p) => !p.file && !p.error);
   const ready = pending.filter((p) => p.file).map((p) => p.file!);
   const canSend = !busy && !uploading && (text.trim().length > 0 || ready.length > 0);
@@ -94,6 +102,13 @@ export function Composer({ models, modelId, onModelChange, onSend, onStop, busy,
           ))}
         </div>
       )}
+      {skill && (
+        <div className="flex items-center gap-2 px-4 pt-3 text-xs">
+          <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-brand"><Wand2 className="h-3 w-3" /> Skill: {skill.name}</span>
+          <span className="text-muted-foreground">applies to your next message</span>
+          <button title="Remove skill" onClick={() => onSkill?.(null)}><X className="h-3 w-3" /></button>
+        </div>
+      )}
       <textarea
         ref={ta}
         rows={1}
@@ -119,16 +134,39 @@ export function Composer({ models, modelId, onModelChange, onSend, onStop, busy,
         >
           <Sparkles /> <span className="hidden sm:inline">Agent</span>
         </Button>
+        {skills.length > 0 && onSkill && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" title="Apply a skill to this message"><Wand2 /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-80 w-64 overflow-y-auto">
+              <DropdownMenuLabel>Skills</DropdownMenuLabel>
+              {skills.map((s) => (
+                <DropdownMenuItem key={s.id} selected={s.id === skillId} onSelect={() => onSkill(s.id)}>
+                  <div><div>{s.name}</div><div className="text-xs text-muted-foreground">{s.description}</div></div>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+        <VoiceButton onText={(v) => { setText((x) => (x ? x + " " : "") + v); ta.current?.focus(); }} />
         <div className="ml-auto flex items-center gap-1">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="max-w-[11rem] text-muted-foreground" disabled={!models.length}>
-                <span className="truncate">{model?.label ?? (models.length ? "Select model" : "No models configured")}</span>
+                {modelId === AUTO_MODEL && <RouteIcon />}
+                <span className="truncate">{modelId === AUTO_MODEL && models.length ? "Auto" : model?.label ?? (models.length ? "Select model" : "No models configured")}</span>
                 <ChevronDown />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-64">
               <DropdownMenuLabel>Model</DropdownMenuLabel>
+              <DropdownMenuItem selected={modelId === AUTO_MODEL} onSelect={() => onModelChange(AUTO_MODEL)}>
+                <div>
+                  <div>Auto</div>
+                  <div className="text-xs text-muted-foreground">Picks the best model for each message, with fallback</div>
+                </div>
+              </DropdownMenuItem>
               {models.map((m) => (
                 <DropdownMenuItem key={m.id} selected={m.id === modelId} onSelect={() => onModelChange(m.id)}>
                   <div>

@@ -46,7 +46,9 @@ class RunManager:
         run = await self.store.create_run(user_id, goal.strip(), model_id)
         await self.bus.publish(run.id, "created", {"goal": run.goal})
         runner = self.runner_factory(store=self.store, bus=self.bus, gate=self.gate, model_id=model_id)
-        task = asyncio.create_task(runner.run(run), name=f"agent-run-{run.id}")
+        from ..hub import usage
+        with usage.scope(user_id, "agent"):
+            task = asyncio.create_task(runner.run(run), name=f"agent-run-{run.id}")
         self.tasks[run.id], self.owners[run.id] = task, user_id
         task.add_done_callback(lambda t, rid=run.id: self.tasks.pop(rid, None))
         return run

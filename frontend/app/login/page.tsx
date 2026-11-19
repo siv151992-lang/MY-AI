@@ -18,7 +18,7 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    fetch("/api/auth/me", { credentials: "same-origin" }).then((r) => r.ok && router.replace("/chat")).catch(() => {});
+    fetch("/api/auth/me", { credentials: "same-origin" }).then((r) => r.ok && router.replace("/home")).catch(() => {});
   }, [router]);
 
   async function submit(e: React.FormEvent) {
@@ -30,7 +30,7 @@ export default function LoginPage() {
         method: "POST",
         body: mode === "signup" ? { email, password, name } : { email, password },
       });
-      router.replace("/chat");
+      router.replace("/home");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not reach the server.");
     } finally {

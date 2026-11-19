@@ -1,9 +1,9 @@
 [
-  {"id": "claude-opus", "label": "Claude Opus 5.5", "provider": "anthropic", "model": "claude-opus-5-5", "vision": true, "tools": true, "max_tokens": 8192, "reasoning": "anthropic_thinking"},
-  {"id": "claude-sonnet", "label": "Claude Sonnet 5.5", "provider": "anthropic", "model": "claude-sonnet-5-5", "vision": true, "tools": true, "max_tokens": 8192, "reasoning": "anthropic_thinking"},
-  {"id": "claude-haiku", "label": "Claude Haiku 5.5", "provider": "anthropic", "model": "claude-haiku-5-5", "vision": true, "tools": true, "max_tokens": 4096, "reasoning": "anthropic_thinking"},
-  {"id": "gpt", "label": "OpenAI GPT", "provider": "openai", "model": "gpt-4.1", "vision": true, "tools": true, "max_tokens": 8192, "reasoning": "scratchpad"},
-  {"id": "gpt-mini", "label": "OpenAI GPT mini", "provider": "openai", "model": "gpt-4.1-mini", "vision": true, "tools": true, "max_tokens": 4096, "reasoning": "scratchpad"},
-  {"id": "llama-local", "label": "Llama (Ollama, local)", "provider": "ollama", "model": "llama3.1", "vision": false, "tools": true, "max_tokens": 4096, "reasoning": "scratchpad"},
-  {"id": "openai-reasoning", "label": "OpenAI reasoning (o-series)", "provider": "openai", "model": "o4-mini", "vision": true, "tools": true, "max_tokens": 16000, "reasoning": "openai_effort"}
+  {"id": "claude-opus", "label": "Claude Opus 5.5", "provider": "anthropic", "model": "claude-opus-5-5", "vision": true, "tools": true, "max_tokens": 8192, "reasoning": "anthropic_thinking", "tier": "frontier", "strengths": ["reasoning", "coding", "writing", "analysis", "research"]},
+  {"id": "claude-sonnet", "label": "Claude Sonnet 5.5", "provider": "anthropic", "model": "claude-sonnet-5-5", "vision": true, "tools": true, "max_tokens": 8192, "reasoning": "anthropic_thinking", "tier": "balanced", "strengths": ["coding", "writing", "analysis", "research"]},
+  {"id": "claude-haiku", "label": "Claude Haiku 5.5", "provider": "anthropic", "model": "claude-haiku-5-5", "vision": true, "tools": true, "max_tokens": 4096, "reasoning": "anthropic_thinking", "tier": "fast", "strengths": ["chat"]},
+  {"id": "gpt", "label": "OpenAI GPT", "provider": "openai", "model": "gpt-4.1", "vision": true, "tools": true, "max_tokens": 8192, "reasoning": "scratchpad", "tier": "balanced", "strengths": ["coding", "writing", "analysis"]},
+  {"id": "gpt-mini", "label": "OpenAI GPT mini", "provider": "openai", "model": "gpt-4.1-mini", "vision": true, "tools": true, "max_tokens": 4096, "reasoning": "scratchpad", "tier": "fast", "strengths": ["chat"]},
+  {"id": "llama-local", "label": "Llama (Ollama, local)", "provider": "ollama", "model": "llama3.1", "vision": false, "tools": true, "max_tokens": 4096, "reasoning": "scratchpad", "tier": "fast", "strengths": ["chat", "private"]},
+  {"id": "openai-reasoning", "label": "OpenAI reasoning (o-series)", "provider": "openai", "model": "o4-mini", "vision": true, "tools": true, "max_tokens": 16000, "reasoning": "openai_effort", "tier": "frontier", "strengths": ["reasoning", "coding", "analysis"]}
 ]

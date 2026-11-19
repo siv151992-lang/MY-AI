@@ -49,6 +49,34 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
                                                    └────────────────────────────────┘
 ```
 
+## Platform hub: one workspace for everything
+
+Aria opens on **Home** (`/home`): a single box for any request. As you type, the adaptive router shows how it would handle it. You see the task type, its complexity, the model it would use, the tools it needs and the reasons. You can then **Ask in chat**, or launch the workspace it suggests: Deep research, the agent team, a code workspace, or an automation. Home also shows live tasks, your projects and the last 7 days of usage. Every page shares one navigation bar.
+
+| Module | What it does | Where |
+|---|---|---|
+| **Adaptive model routing** | Choose **Auto** as the chat model. Each message is classified (chat, coding, reasoning, research, writing, analysis, vision; low/medium/high complexity) and the connected models are scored by tier, strengths, vision/tool support, measured error rate and latency over the last 24 h, and your preferences (balanced / quality / speed / cost, local-only, per-category pins). If a model fails before it produces anything, the next-best model takes over automatically. Every answer carries a "why this model" badge. | `hub/routing.py`, Analytics → Routing preferences |
+| **Usage & performance analytics** | Every model call is recorded: user, feature, model, tokens, latency, time to first token, and errors. Analytics shows totals, p50/p95 latency, error rates per model and feature, task outcomes, and routing decisions. The owner can switch to everyone's usage. Cost appears only for models where you set `price_in`/`price_out` (USD per million tokens) in `models.json`; it is never guessed. | `hub/usage.py`, `/analytics` |
+| **Project workspaces** | A project groups chats, documents, code workspaces, research, team runs, agent runs and automations, with instructions that apply to every chat in it. | `hub/projects.py`, `/projects` |
+| **Context-aware memory** | Memories learned in a project chat are tagged with that project. Recall inside a project sees global memories plus that project's; outside a project, other projects' memories are never used. The Memory panel still shows everything. | `memory/store.py` (`PROJECT_SCOPE`) |
+| **Reusable skills** | Named instructions with `{{input}}` fields, allowed tools and an optional model. Run a skill on the Skills page, apply it to a chat message (✦ button in the chat box), or use it as an automation step. Five built-in skills are included. | `hub/skills.py`, `/skills` |
+| **Custom agents** | Your own specialists, each with instructions, tools and a model. You can chat with one, give it a one-off task, or use it as an automation step. If enabled, the **agent team** planner can assign it work next to the built-in agents. | `hub/custom_agents.py`, `/agents` |
+| **API integrations** | Connect any HTTP/JSON API once (base URL plus bearer, header, query or basic auth). It becomes a tool `api_<name>` for chats, skills, agents and automations. Credentials are encrypted with AES-256-GCM (key derived from `JWT_SECRET`) and never returned to the browser. Only public hosts are allowed, checked on save and on every call, and redirects aren't followed. GET requests are always allowed. Write requests work **only in automations**, and only when you switch on "allow writes" for that integration. | `hub/integrations.py`, `/integrations` |
+| **Automations & autonomous workflows** | Workflows of up to 10 steps: AI task, skill, custom agent, Deep research, agent team, API call, notification. Steps pass results along with `{{prev}}`, `{{steps.N}}`, `{{date}}` and `{{payload.field}}`. Triggers are manual, a schedule (cron or `@daily`/`@every 30m`, time-zone aware, minimum 5 minutes; safe with several backend processes), or a secret webhook URL (token stored hashed, shown once). Each run records the status and output of every step. | `hub/automations.py`, `hub/cron.py`, `/automations` |
+| **Real-time task monitor** | Autonomous-agent, research, team and automation runs in one live list (SSE), with progress, duration, errors and cancel. | `hub/tasks.py`, `/tasks` |
+| **Voice** | Microphone input in the chat box and on Home. With an OpenAI key, audio is transcribed on your server (`whisper-1`). Otherwise the browser's built-in speech recognition is used (Chrome, Edge, Safari), and where neither exists the button is hidden. **Read aloud** on answers uses the browser's speech synthesis. | `hub/voice.py`, `components/hub/VoiceButton.tsx` |
+
+**What needs outside setup.** Integrations → Built-in services shows the live status of each:
+
+- **Web search** needs a Tavily or Brave key. It powers Deep research, the research agent and the "Web brief" skill.
+- **Code execution** needs the sandbox, i.e. the Docker version.
+- **Email notifications** need SMTP settings.
+- **Slack notifications** need `SLACK_WEBHOOK_URL`.
+- **Server-side voice transcription** needs an OpenAI key.
+- **Semantic search** needs an embedding provider and pgvector.
+
+If an automation step relies on something that isn't configured, it fails with a message naming the missing setting. Nothing pretends to work.
+
 ## Reasoning engine
 
 The reasoning engine lives in `backend/app/agent/reasoning/`. It is modular, and every component works with any provider:

@@ -92,6 +92,7 @@ function NewResearch({ config, models, modelId, onModel, onStarted }: {
   config: Config | null; models: ModelInfo[]; modelId: string | null; onModel: (id: string) => void; onStarted: (id: string) => void;
 }) {
   const [q, setQ] = useState("");
+  useEffect(() => { const p = new URLSearchParams(window.location.search).get("prompt"); if (p) setQ(p); }, []);
   const [depth, setDepth] = useState<"quick" | "standard" | "deep">("standard");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

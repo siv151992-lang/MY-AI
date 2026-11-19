@@ -17,6 +17,7 @@ export function WorkspaceHome() {
   const [mode, setMode] = useState<"blank" | "clone" | "zip">("blank");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  useEffect(() => { const p = new URLSearchParams(window.location.search).get("prompt"); if (p) { setDescription(p.slice(0, 500)); setName(p.split(/\s+/).slice(0, 4).join(" ").slice(0, 60)); } }, []);
   const [url, setUrl] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);

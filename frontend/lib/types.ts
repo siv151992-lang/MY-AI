@@ -46,6 +46,9 @@ export type ChatMessage = {
   model?: string;
   memory?: MessageMemory | null;
   suggestions?: MemorySuggestion[];
+  route?: import("./hub").Route | null;
+  skill?: string | null;
+  agent?: string | null;
 };
 
 export type ServerMessage = {
@@ -65,6 +68,9 @@ export type ServerMessage = {
     interrupted?: boolean;
     model?: string;
     memory?: { ids: string[]; recalled: number; compacted: boolean };
+    route?: import("./hub").Route;
+    skill?: { id: string; name: string };
+    agent?: { id: string; name: string };
   };
 };
 

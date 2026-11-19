@@ -18,6 +18,8 @@ class ModelSpec:
     tools: bool
     max_tokens: int
     reasoning: str = "scratchpad"  # "anthropic_thinking" | "openai_effort" | "scratchpad" | "none"
+    tier: str = "balanced"         # fast | balanced | frontier (used by the adaptive router)
+    strengths: tuple = ()          # e.g. ("coding", "reasoning") - router hints
 
 
 @lru_cache
@@ -30,14 +32,17 @@ def providers() -> dict[str, LLMProvider]:
         p["openai"] = OpenAICompatProvider("openai", s.openai_api_key, s.openai_base_url)
     if s.ollama_base_url:
         p["ollama"] = OpenAICompatProvider("ollama", None, s.ollama_base_url, send_usage_option=False)
-    return p
+    from ..hub.usage import MeteredProvider
+    return {k: MeteredProvider(v) for k, v in p.items()}  # every call is recorded for usage analytics
 
 
 @lru_cache
 def available_models() -> list[ModelSpec]:
     """Only models whose provider is configured are offered to users."""
     enabled = providers()
-    return [ModelSpec(**m) for m in get_settings().model_catalog() if m["provider"] in enabled]
+    keys = set(ModelSpec.__dataclass_fields__)
+    return [ModelSpec(**{**{k: v for k, v in m.items() if k in keys}, "strengths": tuple(m.get("strengths") or ())})
+            for m in get_settings().model_catalog() if m["provider"] in enabled]
 
 
 def get_model(model_id: str | None) -> ModelSpec:
@@ -67,6 +72,7 @@ async def embed(texts: list[str]) -> list[list[float]] | None:
     if not s.embedding_provider or not texts or not db.VECTOR_ENABLED:
         return None
     prov = providers().get(s.embedding_provider)
+    prov = getattr(prov, "inner", prov)
     if not isinstance(prov, OpenAICompatProvider):
         return None
     vecs = await prov.embed(s.embedding_model, texts)

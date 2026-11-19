@@ -1,6 +1,7 @@
 """PostgreSQL + pgvector persistence for the memory system. Every query is scoped by user_id."""
 from __future__ import annotations
 
+import contextvars
 from typing import Any
 
 from .. import db
@@ -8,7 +9,22 @@ from ..db import or_query, pool, row, rows, vec
 
 COLS = ("id, content, category, status, source, importance, confidence, sensitivity, pinned, access_count, "
         "created_at, updated_at, last_accessed_at, expires_at, source_conversation_id, source_excerpt, "
-        "supersedes_id, version")
+        "supersedes_id, version, project_id")
+
+# Context-aware memory: while a chat turn runs, PROJECT_SCOPE holds the conversation's project id (or None outside
+# projects). Recall then sees global memories plus that project's memories only, and new memories are tagged with the
+# project. When unset (memory management API), nothing is filtered.
+_UNSET = object()
+PROJECT_SCOPE: contextvars.ContextVar = contextvars.ContextVar("memory_project_scope", default=_UNSET)
+
+
+def _scope(n: int) -> tuple[str, list]:
+    pid = PROJECT_SCOPE.get()
+    if pid is _UNSET:
+        return "", []
+    if pid is None:
+        return " AND project_id IS NULL", []
+    return f" AND (project_id IS NULL OR project_id = ${n}::uuid)", [str(pid)]
 STATUSES = ("pending", "active", "archived")
 EDITABLE = {"content", "category", "importance", "pinned", "status", "sensitivity", "confidence", "expires_at"}
 
@@ -86,10 +102,10 @@ async def insert(user_id: str, *, content: str, category: str, status: str, sour
     async with pool().acquire() as c, c.transaction():
         r = await c.fetchrow(
             f"INSERT INTO memories(user_id, content, category, status, source, importance, confidence, sensitivity, "
-            f"pinned, embedding, source_conversation_id, source_excerpt, supersedes_id) "
-            f"VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::vector,$11,$12,$13) RETURNING {COLS}",
+            f"pinned, embedding, source_conversation_id, source_excerpt, supersedes_id, project_id) "
+            f"VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::vector,$11,$12,$13,$14::uuid) RETURNING {COLS}",
             user_id, content, category, status, source, importance, confidence, sensitivity, pinned, vec(embedding),
-            conv_id, excerpt, supersedes_id)
+            conv_id, excerpt, supersedes_id, _project_for_insert())
         await _revision(c, user_id, r, changed_by, reason)
     return row(r)  # type: ignore[return-value]
 
@@ -169,10 +185,16 @@ async def counts(user_id: str) -> dict[str, int]:
     return out
 
 
+def _project_for_insert() -> str | None:
+    pid = PROJECT_SCOPE.get()
+    return None if pid is _UNSET or pid is None else str(pid)
+
+
 async def pinned(user_id: str, limit: int = 12) -> list[dict]:
+    sc, args = _scope(2)
     return rows(await pool().fetch(
-        f"SELECT {COLS} FROM memories WHERE user_id=$1 AND status='active' AND pinned "
-        f"ORDER BY importance DESC LIMIT {int(limit)}", user_id))
+        f"SELECT {COLS} FROM memories WHERE user_id=$1 AND status='active' AND pinned{sc} "
+        f"ORDER BY importance DESC LIMIT {int(limit)}", user_id, *args))
 
 
 async def vector_search(user_id: str, embedding: list[float], statuses: tuple[str, ...], k: int) -> list[dict]:
@@ -180,8 +202,8 @@ async def vector_search(user_id: str, embedding: list[float], statuses: tuple[st
         await c.execute("SET LOCAL hnsw.ef_search = 200")  # per-user filtering happens after the ANN scan
         return rows(await c.fetch(
             f"SELECT {COLS}, 1 - (embedding <=> $2::vector) AS sim FROM memories "
-            f"WHERE user_id=$1 AND status = ANY($3::text[]) AND embedding IS NOT NULL "
-            f"ORDER BY embedding <=> $2::vector LIMIT {int(k)}", user_id, vec(embedding), list(statuses)))
+            f"WHERE user_id=$1 AND status = ANY($3::text[]) AND embedding IS NOT NULL{_scope(4)[0]} "
+            f"ORDER BY embedding <=> $2::vector LIMIT {int(k)}", user_id, vec(embedding), list(statuses), *_scope(4)[1]))
 
 
 async def keyword_search(user_id: str, query: str, statuses: tuple[str, ...], k: int) -> list[dict]:
@@ -190,8 +212,8 @@ async def keyword_search(user_id: str, query: str, statuses: tuple[str, ...], k:
         return []
     return rows(await pool().fetch(
         f"SELECT {COLS}, ts_rank(tsv, q) AS kw FROM memories, websearch_to_tsquery('english', $2) q "
-        f"WHERE user_id=$1 AND status = ANY($3::text[]) AND tsv @@ q ORDER BY kw DESC LIMIT {int(k)}",
-        user_id, q, list(statuses)))
+        f"WHERE user_id=$1 AND status = ANY($3::text[]) AND tsv @@ q{_scope(4)[0]} ORDER BY kw DESC LIMIT {int(k)}",
+        user_id, q, list(statuses), *_scope(4)[1]))
 
 
 async def touch(user_id: str, ids: list[str]) -> None:

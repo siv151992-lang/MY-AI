@@ -56,6 +56,7 @@ export function TeamApp({ initialId }: { initialId: string | null }) {
 
 function NewRun({ agents, onStarted }: { agents: AgentInfo[]; onStarted: (id: string) => void }) {
   const [goal, setGoal] = useState("");
+  useEffect(() => { const p = new URLSearchParams(window.location.search).get("prompt"); if (p) setGoal(p); }, []);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelId, setModelId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

@@ -9,9 +9,11 @@ import { AgentActivity } from "./AgentActivity";
 import { Markdown } from "./Markdown";
 import { Logo } from "./Logo";
 import { MemorySuggestions, MemoryUsed } from "./MemoryNotes";
+import { RouteBadge } from "@/components/hub/RouteBadge";
+import { SpeakButton } from "@/components/hub/VoiceButton";
 
-export function MessageView({ m, isLast, onRegenerate, busy, onOpenMemory }: {
-  m: ChatMessage; isLast: boolean; onRegenerate: () => void; busy: boolean;
+export function MessageView({ m, isLast, onRegenerate, busy, onOpenMemory, prompt }: {
+  m: ChatMessage; isLast: boolean; onRegenerate: () => void; busy: boolean; prompt?: string;
   onOpenMemory?: (tab?: "active" | "pending" | "chat") => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -67,6 +69,7 @@ export function MessageView({ m, isLast, onRegenerate, busy, onOpenMemory }: {
           </div>
         )}
         {m.interrupted && !m.streaming && <p className="mt-2 text-xs text-muted-foreground">Response stopped.</p>}
+        {m.route && !m.streaming && <RouteBadge route={m.route} prompt={prompt} />}
         {m.suggestions && m.suggestions.length > 0 && <MemorySuggestions items={m.suggestions} onOpen={() => onOpenMemory?.("pending")} />}
         {!m.streaming && (m.content || m.error) && (
           <div className={cn("mt-2 flex items-center gap-1 text-muted-foreground transition-opacity", isLast ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
@@ -81,7 +84,9 @@ export function MessageView({ m, isLast, onRegenerate, busy, onOpenMemory }: {
                 <RotateCcw />
               </Button>
             )}
+            {m.content && <SpeakButton text={m.content} />}
             {m.model && <span className="ml-1 text-xs">{m.model}</span>}
+            {m.skill && <span className="ml-1 text-xs">· skill: {m.skill}</span>}
           </div>
         )}
       </div>

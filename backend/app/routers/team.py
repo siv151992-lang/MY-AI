@@ -39,6 +39,11 @@ async def agents(user: dict = Depends(current_user)):
         out.append({"name": name, "label": LABEL[name], "description": DESCRIPTION[name], "tools": sorted(set(have)),
                     "missing": [t for t in spec.tools if t not in pool and name != "browser"],
                     "available": bool(have) or not spec.requires_tools, "side_effects": spec.side_effects})
+    from ..hub import custom_agents
+    for key, spec in (await custom_agents.team_specs(user["id"])).items():
+        out.append({"name": key, "label": spec.label, "description": spec.description, "tools": spec.tools,
+                    "missing": [t for t in spec.tools if t not in pool and not t.startswith("api_")],
+                    "available": True, "side_effects": spec.side_effects, "custom": True})
     return out
 
 
@@ -87,7 +92,7 @@ async def export(run_id: str, user: dict = Depends(current_user)):
     tasks = await store.tasks(run_id)
     v = run["verification"] or {}
     md = [run["final"], "\n---\n", "## How this was produced",
-          *[f"- **{t['id']} · {LABEL[t['agent']]}** — {t['title']} ({t['status']}"
+          *[f"- **{t['id']} · {LABEL.get(t['agent'], t['agent'].replace('_', ' '))}** — {t['title']} ({t['status']}"
             + (f", {t['confidence']} confidence" if t["confidence"] else "") + ")"
             + (f"; sources: {', '.join(t['sources'])}" if t["sources"] else "") for t in tasks]]
     if run["conflicts"]:

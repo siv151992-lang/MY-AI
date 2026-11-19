@@ -6,7 +6,8 @@ import { api, streamChat, type StreamEvent } from "@/lib/api";
 import type { ChatMessage, Conversation, FileRef, ModelInfo, ServerMessage, User } from "@/lib/types";
 import { cn, uid } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Composer } from "./Composer";
+import { AUTO_MODEL, Composer } from "./Composer";
+import { takeQueuedChatMessage, type Skill } from "@/lib/hub";
 import { ConnectModel } from "./ConnectModel";
 import { MemoryDialog } from "./MemoryDialog";
 import { EmptyState, MessageView } from "./MessageView";
@@ -23,6 +24,7 @@ function fromServer(m: ServerMessage): ChatMessage {
     memory: m.meta?.memory
       ? { used: m.meta.memory.ids.map((id) => ({ id })), recalled: m.meta.memory.recalled, compacted: m.meta.memory.compacted }
       : null,
+    route: m.meta?.route ?? null, skill: m.meta?.skill?.name ?? null,
   };
 }
 
@@ -42,6 +44,10 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
   const openMemory = (tab: "active" | "pending" | "chat" = "active") => { setMemoryTab(tab); setMemoryOpen(true); };
   const [banner, setBanner] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [skillId, setSkillId] = useState<string | null>(null);
+  const [context, setContext] = useState<{ project: { id: string; name: string } | null; agent: { id: string; name: string } | null }>({ project: null, agent: null });
+  const queued = useRef<{ text: string; skillId?: string } | null>(null);
   const [prefill, setPrefill] = useState<{ text: string; n: number }>();
   const [atBottom, setAtBottom] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
@@ -61,10 +67,12 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
         ]);
         setUser(me);
         setModels(ms.models);
-        defaultModel.current = localStorage.getItem("aria.model") && ms.models.some((m) => m.id === localStorage.getItem("aria.model"))
-          ? localStorage.getItem("aria.model") : ms.default;
+        const saved = localStorage.getItem("aria.model");
+        defaultModel.current = saved && (saved === AUTO_MODEL || ms.models.some((m) => m.id === saved)) ? saved
+          : ms.models.length > 1 ? AUTO_MODEL : ms.default;
         setModelId((cur) => cur ?? defaultModel.current);
         setConversations(convs);
+        api<Skill[]>("/api/skills").then(setSkills).catch(() => {});
         if (!ms.models.length) setSetupOpen(true);
       } catch (e: any) {
         if (e.status !== 401) setBanner(e.message || "Could not reach the server.");
@@ -83,12 +91,19 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
     abortRef.current?.abort();
     setActiveId(id);
     setMessages([]);
+    setContext({ project: null, agent: null });
     if (!id) { setModelId(defaultModel.current); return; }
     setLoadingConv(true);
     try {
-      const c = await api<{ id: string; model_id: string | null; messages: ServerMessage[] }>(`/api/conversations/${id}`);
+      const c = await api<{ id: string; model_id: string | null; messages: ServerMessage[]; project: any; agent: any }>(`/api/conversations/${id}`);
       setMessages(c.messages.map(fromServer));
       if (c.model_id) setModelId(c.model_id);
+      setContext({ project: c.project ?? null, agent: c.agent ?? null });
+      const q = takeQueuedChatMessage();
+      if (q) {
+        if (q.skillId) setSkillId(q.skillId);
+        if (q.text && c.messages.length === 0) queued.current = q;
+      }
     } catch (e: any) {
       setBanner(e.status === 404 ? "That conversation no longer exists." : e.message);
       setActiveId(null);
@@ -159,7 +174,9 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
       case "verification": patchLast((m) => ({ ...m, verification: { ok: ev.ok, issues: ev.issues ?? [] }, status: null })); break;
       case "reset": patchLast((m) => ({ ...m, content: "", revised: true })); break;
       case "error": patchLast((m) => ({ ...m, error: ev.message, status: null })); if (/No AI model is connected/.test(ev.message)) setSetupOpen(true); break;
-      case "done": patchLast((m) => ({ ...m, id: ev.message.id, model: ev.message.meta?.model, status: null })); break;
+      case "done": patchLast((m) => ({ ...m, id: ev.message.id, model: ev.message.meta?.model, route: ev.message.meta?.route ?? m.route, skill: ev.message.meta?.skill?.name ?? null, status: null })); break;
+      case "route": patchLast((m) => ({ ...m, route: ev as any, status: `Routed to ${ev.model_id} (${ev.category}, ${ev.complexity})` })); break;
+      case "route_fallback": patchLast((m) => ({ ...m, status: `${ev.from} failed, switching to ${ev.to}` })); break;
       case "memory_context":
         patchLast((m) => ({ ...m, memory: { used: ev.memories ?? [], recalled: (ev.recalled ?? []).length, compacted: !!ev.compacted } }));
         break;
@@ -170,7 +187,7 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
     }
   };
 
-  async function run(convId: string, body: { content: string; file_ids: string[]; regenerate?: boolean }) {
+  async function run(convId: string, body: { content: string; file_ids: string[]; regenerate?: boolean; skill_id?: string | null }) {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     setBusy(true);
@@ -211,8 +228,19 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
       { key: key(), role: "user", content: text, files },
       { key: key(), role: "assistant", content: "", streaming: true, tools: [] },
     ]);
-    await run(convId, { content: text, file_ids: files.map((f) => f.id) });
+    const sk = skillId;
+    setSkillId(null);
+    await run(convId, { content: text, file_ids: files.map((f) => f.id), skill_id: sk });
   }
+
+  // A message handed over from Home (or "use skill in chat") is sent once the conversation has loaded.
+  useEffect(() => {
+    if (!loadingConv && queued.current && activeId && models.length && !busy) {
+      const q = queued.current;
+      queued.current = null;
+      send(q.text, []);
+    }
+  });
 
   async function regenerate() {
     if (!activeId || busy) return;
@@ -246,6 +274,7 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
 
   const composer = (
     <Composer models={models} modelId={modelId} onModelChange={changeModel} onSend={send} busy={busy}
+      skills={skills} skillId={skillId} onSkill={setSkillId}
       onStop={() => abortRef.current?.abort()} agentMode={agentMode} onAgentMode={toggleAgent} prefill={prefill} />
   );
   const empty = !activeId && messages.length === 0;
@@ -265,6 +294,8 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
             </>
           )}
           <div className="min-w-0 flex-1 truncate px-2 text-sm font-medium">{title}</div>
+          {context.project && <a href={`/projects/${context.project.id}`} className="hidden rounded-full border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent sm:inline">Project: {context.project.name}</a>}
+          {context.agent && <a href="/agents" className="hidden rounded-full border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent sm:inline">Agent: {context.agent.name}</a>}
           {activeId && (
             <Button variant="ghost" size="icon" title="Memory for this chat" onClick={() => openMemory("chat")}><Brain /></Button>
           )}
@@ -290,6 +321,7 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
                 {loadingConv && <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
                 {messages.map((m, i) => (
                   <MessageView key={m.key} m={m} busy={busy} onRegenerate={regenerate} onOpenMemory={openMemory}
+                    prompt={i > 0 ? messages[i - 1].content : undefined}
                     isLast={i === messages.length - 1 && m.role === "assistant"} />
                 ))}
               </div>
