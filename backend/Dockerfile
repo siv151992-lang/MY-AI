@@ -1,5 +1,7 @@
 FROM python:3.12-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    PIP_DEFAULT_TIMEOUT=120 PIP_RETRIES=10 PIP_DISABLE_PIP_VERSION_CHECK=1
+# Long timeouts + retries: package downloads on slow or flaky connections stall instead of failing the build
 WORKDIR /app
 # git: coding workspaces are git repositories (run with hooks and external programs disabled)
 # fonts-dejavu-core: Unicode font for research report PDFs
@@ -14,7 +16,7 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends git fonts-dejavu-core tesseract-ocr poppler-utils; \
     rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
 COPY . .
 RUN useradd -r -u 10001 aria && mkdir -p /data/uploads /data/workspaces && chown -R aria /data
 USER aria

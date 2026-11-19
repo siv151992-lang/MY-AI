@@ -1,7 +1,9 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+# Retry package downloads on slow or flaky connections
+RUN npm config set fetch-retries 6 && npm config set fetch-retry-maxtimeout 120000 && npm config set fetch-timeout 600000 && \
+    if [ -f package-lock.json ]; then npm ci; else npm install; fi
 COPY . .
 ARG BACKEND_URL=http://backend:8000
 ENV BACKEND_URL=$BACKEND_URL NEXT_TELEMETRY_DISABLED=1
