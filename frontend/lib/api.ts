@@ -58,7 +58,7 @@ export type StreamEvent = { type: string; [k: string]: any };
 
 export async function streamChat(
   conversationId: string,
-  body: { content: string; file_ids: string[]; model_id?: string | null; agent_mode: boolean; regenerate?: boolean },
+  body: { content: string; file_ids: string[]; model_id?: string | null; agent_mode: boolean; regenerate?: boolean; skill_id?: string | null },
   onEvent: (e: StreamEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {
