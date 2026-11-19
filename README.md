@@ -7,6 +7,7 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 │ Chat: history · Markdown · uploads · model picker · memory panel · themes      │
 │ Code workspace: file explorer · CodeMirror editor · terminal · diffs · git ·   │
 │                 AI panel with approval cards and per-turn undo                 │
+│ Deep research: live progress · cited report · sources · claims · MD/PDF export │
 └──────────────┬─────────────────────────────────────────────────────────────────┘
                │ same-origin /api/* (httpOnly session cookie, SSE streaming)
 ┌──────────────▼──────────────── FastAPI backend ────────────────────────────────┐
@@ -19,6 +20,8 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 │                                      memories (pgvector, user-approved)        │
 │   Coding workspace   workspace/      git-backed projects, code tools, approval │
 │                                      gate, checkpoints, sandboxed commands     │
+│   Deep research      research/       plan → search → read → quote-verified     │
+│                                      claims → cross-check → verify → report    │
 │   Tool engine        tools/base.py   typed registry, timeouts, errors → model  │
 │   Research engine    tools/web.py    web_search (Tavily/Brave) + fetch_url     │
 │   Coding engine      tools/code.py   run_python in the isolated sandbox        │
@@ -31,7 +34,8 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 │ users · conversations · messages · files ·   │  │ /run  Python snippets          │
 │ document_chunks · memories (+revisions,      │  │ /exec shell commands on a copy │
 │ settings, audit) · conversation_segments ·   │  │ of a project (python, pytest,  │
-│ workspaces · workspace_activity · agent_*    │  │ node, npm, git, make)          │
+│ workspaces · workspace_activity · agent_* ·  │
+│ research_runs/sources/claims/events          │  │ node, npm, git, make)          │
 └──────────────────────────────────────────────┘  │ no internet, read-only FS, non-│
   workspaces volume: one git repo per project      │ root, rlimits, timeouts, token │
                                                    └────────────────────────────────┘
@@ -195,6 +199,45 @@ There is no persistent shell: the terminal remembers `cd` itself, but nothing el
 
 **Limits.** Files over 2 MB aren't opened in the editor. Projects over 40 MB can't be sent to the sandbox. Imports are capped at `WORKSPACE_IMPORT_MAX_MB`. Approvals are held in the backend process's memory, so run a single backend replica, or move the approval gate to Redis or Postgres before scaling out.
 
+## Deep research
+
+Open **Deep research** in the sidebar (`/research`). Ask a question and choose a depth:
+
+| Depth | Sub-questions | Sources read (at most) | Single-source claims re-verified |
+|---|---|---|---|
+| Quick | 3 | 6 | 0 |
+| Standard | 5 | 12 | 3 |
+| Deep | 7 | 20 | 6 |
+
+Each run is a background task. Its progress streams live: a phase bar, every search with its result count, every page read or failed, the claims extracted from each page, conflicts found and verification results. You can leave and come back, because the event history is stored and replayed. The pipeline lives in `backend/app/research/engine.py`:
+
+1. **Plan.** The question is split into sub-questions, each with search queries.
+2. **Search.** Every query is sent to the configured search provider (Tavily or Brave). Failed searches are recorded and shown.
+3. **Select.** Candidate pages are ranked by source reliability, search rank and how many queries found them. Every sub-question gets at least one page, and pages per site are capped so the sources stay diverse. Reliability (`reliability.py`) is a transparent domain heuristic (official/academic/reference > reputable secondary > unknown > user-generated), and its reason is shown next to each source.
+4. **Read.** Pages (HTML, text or PDF) are fetched through the SSRF guard. Pages that fail, or that have too little readable text (paywalls, logins), are listed as unread and never cited.
+5. **Extract.** For each page, the model lists claims, each with a **verbatim quote**. A claim is kept only if its quote actually appears in the downloaded text. Whitespace, case and typographic quotes are normalised, and an elided quote only counts if every fragment appears in order. Claims that fail this check are discarded and counted.
+6. **Cross-check.** For each sub-question, claims are grouped by agreement and **conflicts** are identified, with an assessment of which side is better supported. A claim counts as *corroborated* only when at least two **different sites** support it.
+7. **Verify.** Important claims that rest on a single source get their own search. Pages from other sites are read and checked for support or contradiction, again requiring a verified quote.
+8. **Write.** The report model receives only the verified evidence and must cite `[S#]`.
+   - Citations to sources that weren't read are removed, and the statement is marked *[unsupported]*.
+   - A sources list written by the model is discarded.
+   - The **claim verification table**, **source comparison table**, **sources list** (URLs and access dates) and **"How this research was done"** section are generated from the database. That section gives real counts of searches, failures, rejected quotes and removed citations.
+
+**Never claiming research that didn't happen:**
+
+| Situation | What happens |
+|---|---|
+| No search provider is configured (`TAVILY_API_KEY` / `BRAVE_API_KEY`) | Deep research refuses to start and says why. |
+| Every search fails, no page can be read, no verifiable evidence is found, or the draft cites none of the sources | The run ends as **failed with an explanation and no report**. |
+| A run completes | Each source in the report links to the page that was actually downloaded. Each claim shows its quote and the source it was verified in. |
+
+**Output.** The report contains an executive summary, findings for each sub-question, comparison tables, a section on conflicting information, and a confidence and limitations section. Every `[S#]` links to its source. The **Sources** tab shows reliability, how each page was found, and claims per source. The **Claims** tab shows every claim with its quote, status (corroborated, single source or conflicting) and the conflicts with their assessments. You can export to **Markdown** or **PDF** (fpdf2, with DejaVu fonts for Unicode).
+
+**Limits.**
+- Runs execute inside the backend process; at most 2 run at once per user. Unfinished runs are marked failed after a restart.
+- Reliability ratings and "corroborated" are signals, not proof, and the report says so.
+- Search quality depends on the provider. Pages that need JavaScript to render can't be read.
+
 ## Quick start (Docker)
 
 You need Docker Desktop (Windows or macOS) or Docker Engine (Linux).
@@ -218,7 +261,7 @@ Then open **http://localhost:3000**, create an account and start chatting.
 | Models shown in the selector | `backend/models.json`: add or edit entries (`provider` is `anthropic`, `openai` or `ollama`). Only models whose provider has a key appear. |
 | Default and background models | `DEFAULT_MODEL_ID`, `UTILITY_MODEL_ID`. The utility model writes titles, plans, verification checks and memory extraction, so a cheap fast model works well here. |
 | Semantic search | `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL` / `EMBEDDING_DIM`. Without these, memory and document search use Postgres full-text search. **Set `EMBEDDING_DIM` before the first start**, because it is fixed into the schema. |
-| Web research | `TAVILY_API_KEY` or `BRAVE_API_KEY` enables `web_search`. `fetch_url` always works. |
+| Web research | `TAVILY_API_KEY` or `BRAVE_API_KEY` enables `web_search` and Deep research (which refuses to run without one). `fetch_url` always works. |
 
 Model IDs change over time. If a provider rejects a model name, update `backend/models.json`.
 
@@ -257,16 +300,18 @@ cd frontend && npm install && npm run dev        # http://localhost:3000, proxie
 ## Tests
 
 ```bash
-cd backend && pytest            # 114 tests (incl. 10 autonomous-run scenarios: approval granted/denied,
+cd backend && pytest            # 128 tests (incl. 10 autonomous-run scenarios: approval granted/denied,
                                 # grounding guard, retry, re-plan, remediation, cancel, report): stream parsers (incl. thinking blocks), agent loop, reasoning
                                 # engine (analyzer, clarifier, planner, verifier, state, scratchpad privacy),
                                 # memory (privacy rules, scoring, rank fusion, extraction, compaction),
                                 # coding workspace (path safety, edits, git, checkpoints, sandbox commands,
-                                # approvals, code search), tools, SSRF guard, chunking, PDF extraction, sandbox
+                                # approvals, code search), deep research (quote verification, citation
+                                # validation, conflicts, source selection, report, PDF), tools, SSRF guard,
+                                # chunking, PDF extraction, sandbox
 # Integration tests against real PostgreSQL + pgvector (load db/init/01-schema.sh into an
 # empty database first; skipped unless the URL is set):
-TEST_DATABASE_URL=postgresql://postgres@localhost:5432/aria_test pytest tests/test_memory_pg.py tests/test_workspace_pg.py
-cd frontend && npm test         # SSE and diff parsers
+TEST_DATABASE_URL=postgresql://postgres@localhost:5432/aria_test pytest tests/test_memory_pg.py tests/test_workspace_pg.py tests/test_research_pg.py
+cd frontend && npm test         # SSE and diff parsers, citation linking
 ```
 
 The orchestrator tests use a scripted provider *in the test suite only*, so plan → tool → verify → revise can be checked deterministically. The application itself always calls real APIs.

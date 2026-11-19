@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from . import db
 from .config import get_settings
 from .llm import registry
-from .routers import agent, auth, conversations, files, memory, workspaces
+from .routers import agent, auth, conversations, files, memory, research, workspaces
 from .security import csrf_guard
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -28,6 +28,8 @@ async def lifespan(app: FastAPI):
     await db.migrate(s.embedding_dim)
     from .autonomy.manager import get_manager
     await get_manager().recover_after_restart()
+    from .research.manager import get_manager as research_manager
+    await research_manager().recover_after_restart()
     models = registry.available_models()
     from .memory.service import maintenance_loop
     maintenance = asyncio.create_task(maintenance_loop())
@@ -44,7 +46,7 @@ app.add_middleware(CORSMiddleware, allow_origins=get_settings().cors_origin_list
                    allow_methods=["*"], allow_headers=["*"])
 
 for r in (auth.router, conversations.router, files.router, memory.router, memory.conversation_router, agent.router,
-          workspaces.router):
+          workspaces.router, research.router):
     app.include_router(r)
 
 

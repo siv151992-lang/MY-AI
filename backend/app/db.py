@@ -179,8 +179,9 @@ MIGRATIONS = [
 async def migrate(embedding_dim: int = 1536) -> None:
     from .memory.store import MIGRATIONS as MEMORY_MIGRATIONS  # 004 — advanced memory
     from .workspace.store import MIGRATIONS as WORKSPACE_MIGRATIONS  # 005 — coding workspaces
+    from .research.store import MIGRATIONS as RESEARCH_MIGRATIONS  # 006 — deep research
     async with pool().acquire() as c:
-        for stmt in MIGRATIONS + MEMORY_MIGRATIONS + WORKSPACE_MIGRATIONS:
+        for stmt in MIGRATIONS + MEMORY_MIGRATIONS + WORKSPACE_MIGRATIONS + RESEARCH_MIGRATIONS:
             await c.execute(stmt.replace("{DIM}", str(int(embedding_dim))))
 
 
