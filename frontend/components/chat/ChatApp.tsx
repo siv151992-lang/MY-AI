@@ -158,7 +158,7 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
         break;
       case "verification": patchLast((m) => ({ ...m, verification: { ok: ev.ok, issues: ev.issues ?? [] }, status: null })); break;
       case "reset": patchLast((m) => ({ ...m, content: "", revised: true })); break;
-      case "error": patchLast((m) => ({ ...m, error: ev.message, status: null })); break;
+      case "error": patchLast((m) => ({ ...m, error: ev.message, status: null })); if (/No AI model is connected/.test(ev.message)) setSetupOpen(true); break;
       case "done": patchLast((m) => ({ ...m, id: ev.message.id, model: ev.message.meta?.model, status: null })); break;
       case "memory_context":
         patchLast((m) => ({ ...m, memory: { used: ev.memories ?? [], recalled: (ev.recalled ?? []).length, compacted: !!ev.compacted } }));
@@ -180,6 +180,7 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
     } catch (e: any) {
       if (e.name === "AbortError") patchLast((m) => ({ ...m, interrupted: true }));
       else patchLast((m) => ({ ...m, error: e.message || "Connection lost." }));
+      if (e.status === 503 || /No AI model is connected/.test(e.message ?? "")) setSetupOpen(true);
     } finally {
       patchLast((m) => ({ ...m, streaming: false, status: null, tools: m.tools?.map((t) => ({ ...t, running: false })) }));
       setBusy(false);
@@ -300,6 +301,9 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
                   onClick={() => { setAtBottom(true); scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" }); }}>
                   <ArrowDown />
                 </Button>
+              )}
+              {setupOpen && (
+                <div className="mb-3"><ConnectModel onConnected={() => reloadModels().catch(() => {})} onClose={() => setSetupOpen(false)} /></div>
               )}
               {composer}
               <p className="mt-2 text-center text-xs text-muted-foreground">Aria can make mistakes. Check important information.</p>
