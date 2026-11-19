@@ -7,6 +7,7 @@ import type { ChatMessage, Conversation, FileRef, ModelInfo, ServerMessage, User
 import { cn, uid } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Composer } from "./Composer";
+import { ConnectModel } from "./ConnectModel";
 import { MemoryDialog } from "./MemoryDialog";
 import { EmptyState, MessageView } from "./MessageView";
 import { Sidebar } from "./Sidebar";
@@ -40,6 +41,7 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
   const [memoryTab, setMemoryTab] = useState<"active" | "pending" | "chat">("active");
   const openMemory = (tab: "active" | "pending" | "chat" = "active") => { setMemoryTab(tab); setMemoryOpen(true); };
   const [banner, setBanner] = useState<string | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
   const [prefill, setPrefill] = useState<{ text: string; n: number }>();
   const [atBottom, setAtBottom] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
@@ -63,12 +65,19 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
           ? localStorage.getItem("aria.model") : ms.default;
         setModelId((cur) => cur ?? defaultModel.current);
         setConversations(convs);
-        if (!ms.models.length) setBanner("No AI provider is configured on the server. Add an API key to the backend .env file.");
+        if (!ms.models.length) setSetupOpen(true);
       } catch (e: any) {
         if (e.status !== 401) setBanner(e.message || "Could not reach the server.");
       }
     })();
   }, []);
+
+  const reloadModels = async () => {
+    const ms = await api<{ default: string | null; models: ModelInfo[] }>("/api/models");
+    setModels(ms.models);
+    defaultModel.current = ms.default;
+    setModelId((cur) => (cur && ms.models.some((m) => m.id === cur) ? cur : ms.default));
+  };
 
   const loadConversation = useCallback(async (id: string | null) => {
     abortRef.current?.abort();
@@ -149,7 +158,7 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
         break;
       case "verification": patchLast((m) => ({ ...m, verification: { ok: ev.ok, issues: ev.issues ?? [] }, status: null })); break;
       case "reset": patchLast((m) => ({ ...m, content: "", revised: true })); break;
-      case "error": patchLast((m) => ({ ...m, error: ev.message, status: null })); break;
+      case "error": patchLast((m) => ({ ...m, error: ev.message, status: null })); if (/No AI model is connected/.test(ev.message)) setSetupOpen(true); break;
       case "done": patchLast((m) => ({ ...m, id: ev.message.id, model: ev.message.meta?.model, status: null })); break;
       case "memory_context":
         patchLast((m) => ({ ...m, memory: { used: ev.memories ?? [], recalled: (ev.recalled ?? []).length, compacted: !!ev.compacted } }));
@@ -171,6 +180,7 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
     } catch (e: any) {
       if (e.name === "AbortError") patchLast((m) => ({ ...m, interrupted: true }));
       else patchLast((m) => ({ ...m, error: e.message || "Connection lost." }));
+      if (e.status === 503 || /No AI model is connected/.test(e.message ?? "")) setSetupOpen(true);
     } finally {
       patchLast((m) => ({ ...m, streaming: false, status: null, tools: m.tools?.map((t) => ({ ...t, running: false })) }));
       setBusy(false);
@@ -269,6 +279,7 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
           <div className="flex flex-1 flex-col items-center justify-center px-4">
             <div className="w-full max-w-3xl space-y-6">
               <EmptyState name={user?.name ?? ""} onPick={(s) => setPrefill({ text: s, n: Date.now() })} />
+              {setupOpen && <ConnectModel onConnected={() => reloadModels().catch(() => {})} onClose={() => setSetupOpen(false)} />}
               {composer}
             </div>
           </div>
@@ -290,6 +301,9 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
                   onClick={() => { setAtBottom(true); scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" }); }}>
                   <ArrowDown />
                 </Button>
+              )}
+              {setupOpen && (
+                <div className="mb-3"><ConnectModel onConnected={() => reloadModels().catch(() => {})} onClose={() => setSetupOpen(false)} /></div>
               )}
               {composer}
               <p className="mt-2 text-center text-xs text-muted-foreground">Aria can make mistakes. Check important information.</p>

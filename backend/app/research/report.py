@@ -99,7 +99,10 @@ def executive_summary(body: str) -> str:
 # ---------- PDF ----------
 def _font_paths() -> tuple[str, str] | None:
     import os
-    for regular, bold in (("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),):
+    win = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
+    for regular, bold in (("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+                          (os.path.join(win, "arial.ttf"), os.path.join(win, "arialbd.ttf")),
+                          ("/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Supplemental/Arial Bold.ttf")):
         if os.path.exists(regular) and os.path.exists(bold):
             return regular, bold
     return None
@@ -118,11 +121,11 @@ def to_pdf(markdown_text: str, title: str) -> bytes:
     pdf.set_auto_page_break(True, margin=15)
     fonts = _font_paths()
     if fonts:
-        pdf.add_font("DejaVu", "", fonts[0])
-        pdf.add_font("DejaVu", "B", fonts[1])
-        pdf.add_font("DejaVu", "I", fonts[0])
-        pdf.add_font("DejaVu", "BI", fonts[1])
-        family = "DejaVu"
+        pdf.add_font("UniFont", "", fonts[0])
+        pdf.add_font("UniFont", "B", fonts[1])
+        pdf.add_font("UniFont", "I", fonts[0])
+        pdf.add_font("UniFont", "BI", fonts[1])
+        family = "UniFont"
     else:  # core fonts are Latin-1 only
         family = "Helvetica"
         html = html.encode("latin-1", "replace").decode("latin-1")

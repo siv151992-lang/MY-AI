@@ -11,9 +11,20 @@ from pathlib import Path
 MAX_OCR_PAGES = 40
 
 
+WINDOWS_TESSERACT = (r"C:\Program Files\Tesseract-OCR\tesseract.exe", r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe")
+
+
 @lru_cache
+def tesseract_cmd() -> str | None:
+    import os
+    for cand in (os.environ.get("TESSERACT_CMD"), shutil.which("tesseract"), *WINDOWS_TESSERACT):
+        if cand and os.path.isfile(cand) or (cand and shutil.which(cand)):
+            return cand
+    return None
+
+
 def available() -> bool:
-    return shutil.which("tesseract") is not None
+    return tesseract_cmd() is not None
 
 
 def ocr_image(data: bytes, lang: str = "eng") -> str:
@@ -21,6 +32,7 @@ def ocr_image(data: bytes, lang: str = "eng") -> str:
         return ""
     import pytesseract
     from PIL import Image, ImageOps
+    pytesseract.pytesseract.tesseract_cmd = tesseract_cmd()
     img = Image.open(io.BytesIO(data))
     img = ImageOps.exif_transpose(img).convert("L")
     if max(img.size) < 1200:  # small screenshots OCR better upscaled

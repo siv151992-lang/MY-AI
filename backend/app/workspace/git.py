@@ -42,9 +42,14 @@ async def git(root: Path, *args: str, env: dict | None = None, check: bool = Tru
          "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "LANG": "C.UTF-8",
          "GIT_AUTHOR_NAME": "Aria", "GIT_AUTHOR_EMAIL": "aria@localhost",
          "GIT_COMMITTER_NAME": "Aria", "GIT_COMMITTER_EMAIL": "aria@localhost", **(env or {})}
-    proc = await asyncio.create_subprocess_exec(
-        "git", *SAFE_CONFIG, *args, cwd=str(root), env=e, stdin=asyncio.subprocess.PIPE if input_ else None,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    if os.name == "nt":  # Windows needs these to start programs and find its own files
+        e.update({k: os.environ[k] for k in ("SYSTEMROOT", "COMSPEC", "PATHEXT", "TEMP", "TMP") if k in os.environ})
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", *SAFE_CONFIG, *args, cwd=str(root), env=e, stdin=asyncio.subprocess.PIPE if input_ else None,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    except FileNotFoundError:
+        raise GitError("Git is not installed on the server, so code workspaces are unavailable. Install Git and restart.")
     try:
         out, err = await asyncio.wait_for(proc.communicate(input_), timeout=timeout)
     except asyncio.TimeoutError:

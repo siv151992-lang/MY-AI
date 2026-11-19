@@ -43,7 +43,7 @@ def available_models() -> list[ModelSpec]:
 def get_model(model_id: str | None) -> ModelSpec:
     models = available_models()
     if not models:
-        raise RuntimeError("No LLM provider is configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY or OLLAMA_BASE_URL.")
+        raise RuntimeError("No AI model is connected yet. Paste your API key in the Connect an AI model box on the chat screen.")
     wanted = model_id or get_settings().default_model_id
     for m in models:
         if m.id == wanted:
@@ -62,8 +62,9 @@ def provider_for(spec: ModelSpec) -> LLMProvider:
 
 async def embed(texts: list[str]) -> list[list[float]] | None:
     """Returns None when no embedding provider is configured (callers fall back to keyword search)."""
+    from .. import db
     s = get_settings()
-    if not s.embedding_provider or not texts:
+    if not s.embedding_provider or not texts or not db.VECTOR_ENABLED:
         return None
     prov = providers().get(s.embedding_provider)
     if not isinstance(prov, OpenAICompatProvider):
