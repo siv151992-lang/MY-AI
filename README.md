@@ -328,6 +328,8 @@ Open **Agent team** in the sidebar (`/team`), describe a goal, and a team of spe
 
 You need Docker Desktop (Windows or macOS) or Docker Engine (Linux).
 
+**Windows shortcut:** double-click `aria.bat`. It creates `.env` with random secrets, opens it in Notepad so you can add a model API key, starts everything and opens the browser. `aria.bat stop`, `aria.bat logs`, `aria.bat status` and `aria.bat update` cover the rest.
+
 ```bash
 cp .env.example .env
 # edit .env: set JWT_SECRET and SANDBOX_TOKEN to long random strings,
