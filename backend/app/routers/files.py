@@ -1,17 +1,14 @@
+"""Chat attachments. Uploads go through the document intelligence pipeline (extraction, OCR, indexing), and
+downloads through its access checks."""
 from __future__ import annotations
 
-import asyncio
-import uuid
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
-from fastapi.responses import FileResponse
 
-from .. import db
 from ..config import get_settings
-from ..llm import registry
+from ..documents import access, service, store
+from ..documents.extract import UnsupportedFile
 from ..security import current_user
-from ..services.documents import UnsupportedFile, chunk_text, classify, extract_text, sniff_image_mime
+from .documents import _file_response
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 
@@ -25,59 +22,32 @@ async def upload(file: UploadFile, user: dict = Depends(current_user)):
         raise HTTPException(413, f"File is larger than {s.max_upload_mb} MB.")
     if not data:
         raise HTTPException(422, "File is empty.")
-    filename = Path(file.filename or "upload").name[:200]
-    kind = classify(filename, file.content_type or "", data[:16])
-    file_id = str(uuid.uuid4())
-    user_dir = s.upload_dir / user["id"]
-    user_dir.mkdir(parents=True, exist_ok=True)
-    path = user_dir / file_id  # never use the client filename on disk
-
-    text = None
-    mime = file.content_type or "application/octet-stream"
-    if kind == "image":
-        mime = sniff_image_mime(data[:16])
-    else:
-        try:
-            text = await asyncio.to_thread(extract_text, filename, data)
-        except UnsupportedFile as e:
-            raise HTTPException(415, str(e))
-        except Exception:
-            raise HTTPException(422, "Could not read this file. Is it corrupted or password-protected?")
-        text = text.replace("\x00", "")
-
-    await asyncio.to_thread(path.write_bytes, data)
-    rec = await db.create_file(user["id"], id=file_id, filename=filename, mime_type=mime, size_bytes=len(data),
-                               storage_path=str(path), kind=kind, text_content=text)
-    if text:
-        chunks = chunk_text(text)
-        try:
-            embs = await registry.embed(chunks)
-        except Exception:
-            embs = None  # keyword search still works
-        await db.add_chunks(user["id"], file_id, chunks, embs)
-        rec["chars"] = len(text)
-        rec["chunks"] = len(chunks)
-    return rec
+    try:
+        return await service.ingest(user["id"], file.filename or "upload", data)
+    except UnsupportedFile as e:
+        raise HTTPException(415, str(e))
 
 
 @router.get("")
 async def list_files(user: dict = Depends(current_user)):
-    return await db.list_files(user["id"])
+    return await store.list_docs(user["id"])
 
 
 @router.get("/{file_id}/content")
 async def download(file_id: str, user: dict = Depends(current_user)):
-    files = await db.get_files(user["id"], [file_id])
-    if not files:
+    try:
+        await access.require(user["id"], file_id)
+    except access.NotFound:
         raise HTTPException(404, "File not found")
-    f = files[0]
-    return FileResponse(f["storage_path"], media_type=f["mime_type"], filename=f["filename"])
+    return _file_response(await store.get_doc(user["id"], file_id))
 
 
 @router.delete("/{file_id}")
 async def delete(file_id: str, user: dict = Depends(current_user)):
-    rec = await db.delete_file(user["id"], file_id)
-    if not rec:
+    try:
+        await service.delete(user["id"], file_id)
+    except access.NotFound:
         raise HTTPException(404, "File not found")
-    Path(rec["storage_path"]).unlink(missing_ok=True)
+    except access.Forbidden as e:
+        raise HTTPException(403, str(e))
     return {"ok": True}

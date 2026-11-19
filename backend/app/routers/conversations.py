@@ -67,8 +67,10 @@ async def get_conversation(conv_id: str, user: dict = Depends(current_user)):
     conv = await _owned(user, conv_id)
     msgs = await db.list_messages(conv_id)
     file_ids = sorted({f for m in msgs for f in m["file_ids"]})
+    from ..documents import access, store as doc_store
+    readable = await access.filter_readable(user["id"], file_ids)
     files = {f["id"]: {"id": f["id"], "filename": f["filename"], "kind": f["kind"], "mime_type": f["mime_type"]}
-             for f in await db.get_files(user["id"], file_ids)}
+             for f in await doc_store.get_docs(user["id"], readable)}
     for m in msgs:
         m["files"] = [files[f] for f in m["file_ids"] if f in files]
     return {"id": conv["id"], "title": conv["title"], "model_id": conv["model_id"], "messages": msgs}
@@ -101,6 +103,8 @@ async def send_message(conv_id: str, body: MessageIn, request: Request, user: di
         registry.get_model(body.model_id)
     except RuntimeError as e:
         raise HTTPException(503, str(e))
+    from ..documents import access
+    body.file_ids = await access.filter_readable(user["id"], body.file_ids)  # never attach documents the user can't read
 
     async def stream():
         try:

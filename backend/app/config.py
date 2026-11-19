@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     autonomy_approval_timeout_min: int = 30
     autonomy_max_concurrent_runs: int = 3    # per user
 
+    # Coding workspace
+    workspace_root: Path = Path("/data/workspaces")
+    workspace_max_agent_steps: int = 40      # tool rounds per coding turn
+    workspace_approval_timeout_min: int = 15
+    workspace_import_max_mb: int = 50
+
     # Agent
     max_agent_steps: int = 8
     max_revisions: int = 1

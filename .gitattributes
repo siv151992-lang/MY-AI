@@ -1,0 +1,2 @@
+# Windows batch files: stored byte-for-byte with CRLF so raw downloads from GitHub work
+*.bat -text

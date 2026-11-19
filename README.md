@@ -4,7 +4,12 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 
 ```
 ┌──────────── Browser (Next.js 15 · React 19 · Tailwind · shadcn/ui) ────────────┐
-│ Sidebar/history · Markdown + code highlight · uploads · model picker · themes │
+│ Chat: history · Markdown · uploads · model picker · memory panel · themes      │
+│ Code workspace: file explorer · CodeMirror editor · terminal · diffs · git ·   │
+│                 AI panel with approval cards and per-turn undo                 │
+│ Deep research: live progress · cited report · sources · claims · MD/PDF export │
+│ Documents: library · ask (RAG) · compare · extract · tables · generate · share │
+│ Agent team: live agent roster · task graph · conflicts · verification          │
 └──────────────┬─────────────────────────────────────────────────────────────────┘
                │ same-origin /api/* (httpOnly session cookie, SSE streaming)
 ┌──────────────▼──────────────── FastAPI backend ────────────────────────────────┐
@@ -15,6 +20,14 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 │   Memory system      memory/         tiered: working window → state → rolling  │
 │                                      summary → episodic segments → long-term   │
 │                                      memories (pgvector, user-approved)        │
+│   Coding workspace   workspace/      git-backed projects, code tools, approval │
+│                                      gate, checkpoints, sandboxed commands     │
+│   Deep research      research/       plan → search → read → quote-verified     │
+│                                      claims → cross-check → verify → report    │
+│   Documents          documents/      extract + OCR → chunks/tables → hybrid    │
+│                                      RAG; access checks on every read          │
+│   Agent team         team/           plan → parallel specialists → reconcile   │
+│                                      conflicts → synthesize → verify           │
 │   Tool engine        tools/base.py   typed registry, timeouts, errors → model  │
 │   Research engine    tools/web.py    web_search (Tavily/Brave) + fetch_url     │
 │   Coding engine      tools/code.py   run_python in the isolated sandbox        │
@@ -23,12 +36,17 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
 │ LLM layer: Anthropic + OpenAI-compatible (OpenAI, Ollama, Groq, OpenRouter…)   │
 └───────┬─────────────────────────────────────────────┬──────────────────────────┘
         │                                             │ internal network only
-┌───────▼────────── PostgreSQL 16 + pgvector ──┐  ┌───▼──── Python sandbox ────────┐
-│ users · conversations · messages · files ·   │  │ no internet, read-only FS, non- │
-│ document_chunks · memories · memory_revisions│
-│ memory_settings · memory_audit ·             │
-│ conversation_segments (vector, tsv)          │  │ root, rlimits, timeouts, token  │
-└──────────────────────────────────────────────┘  └────────────────────────────────┘
+┌───────▼────────── PostgreSQL 16 + pgvector ──┐  ┌───▼──── Sandbox ───────────────┐
+│ users · conversations · messages · files ·   │  │ /run  Python snippets          │
+│ document_chunks · memories (+revisions,      │  │ /exec shell commands on a copy │
+│ settings, audit) · conversation_segments ·   │  │ of a project (python, pytest,  │
+│ workspaces · workspace_activity · agent_* ·  │
+│ research_runs/sources/claims/events ·        │
+│ document_tables · document_access ·          │
+│ team_runs/tasks/events                       │  │ node, npm, git, make)          │
+└──────────────────────────────────────────────┘  │ no internet, read-only FS, non-│
+  workspaces volume: one git repo per project      │ root, rlimits, timeouts, token │
+                                                   └────────────────────────────────┘
 ```
 
 ## Reasoning engine
@@ -142,9 +160,175 @@ Secrets (passwords, API keys and tokens, Luhn-valid card numbers, SSNs, IBANs, p
 
 A maintenance task runs every 6 hours. It expires stale suggestions, applies retention, and backfills embeddings for memories saved while the embedding provider was down. Without `EMBEDDING_PROVIDER`, everything still works using full-text search.
 
+## Coding workspace
+
+Open **Code workspace** in the sidebar (`/code`). Each workspace is a real project, stored as a git repository on the `workspaces` volume. You can start one blank, clone it from a public HTTPS git URL, or upload a `.zip`.
+
+The screen has four parts:
+
+- **File explorer:** create, rename, move and delete files and folders. Files with uncommitted changes are coloured by their git status.
+- **Editor:** CodeMirror with syntax highlighting for most languages. Save with Ctrl/⌘+S. Before saving, it checks the file hasn't been changed underneath you (for example by the AI), so it never silently overwrites.
+- **Terminal:** runs commands in the sandbox (details below).
+- **AI panel:** a chat that works on the project. The open file and any selected lines are sent along as context.
+
+The side bar also has **Search** (text, regex, or a natural-language query that ranks files) and **Source control** (changed files with diffs, discard, commit, branches, history, remote, push).
+
+**What the AI can do** (`backend/app/workspace/tools.py`):
+
+| Capability | Tools |
+|---|---|
+| Read and understand the codebase | `repo_map` (every file with its top-level functions and classes, also put into the prompt), `list_files`, `read_file`, `search_code` (literal, regex, or a natural-language query ranked with BM25 over code, paths and symbol names) |
+| Generate and edit across many files | `write_files` (scaffold a whole application in one call), `write_file`, `edit_file` (exact search-and-replace that must match exactly once, so edits stay small and reviewable), `move_path` |
+| Debug and run tests | `run_command`, `run_tests` (detects pytest, `npm test`, `node --test`, `go test`, `cargo test` or `make test`) |
+| Git | `git_status`, `git_diff`, `git_log`, `git_commit` |
+| Delete | `delete_path` |
+
+The coding prompt has the AI work like an engineer: read before changing, make focused edits, run the tests, fix the failures it sees, then summarise what changed and how it was verified. Explaining code, refactoring and writing documentation are ordinary requests to the same agent. Quick-start buttons in the AI panel cover the common ones.
+
+**Approvals and undo.**
+
+| Action | What happens |
+|---|---|
+| The AI creates or edits files | Applied straight away and shown live: the explorer refreshes and open tabs reload. |
+| The AI deletes files, commits, or runs a command that deletes files | Pauses at an approval card showing the exact files, or the commit message and diffstat. Nothing happens until you click Approve. If you deny it, or don't answer within `WORKSPACE_APPROVAL_TIMEOUT_MIN` minutes, the AI is told to carry on without it. |
+| Push (publishing) | The AI has no push tool. You push from Source control after a confirmation dialog. The access token is used for that one push via an environment-only HTTP header and is never written to disk. |
+| You delete, discard changes, restore a checkpoint or delete a workspace in the UI | Asks you to confirm first. The API enforces this too: these endpoints return `428` unless `confirm: true` is sent. |
+| Any AI turn | A **checkpoint** of the whole working tree (untracked files included) is taken before it starts, as a private git ref, without touching your index or branch. Afterwards the turn shows which files changed, with **Review** (diff) and **Undo** (restore the checkpoint; your current state is checkpointed first, so undo can itself be undone). |
+
+**Sandboxed execution** (`sandbox/server.py`, `POST /exec`). Each command, whether typed in the terminal or run by the AI, works like this:
+
+1. The project is sent to the sandbox as a tarball (without `.git`, `node_modules` and build folders).
+2. The command runs on a throwaway copy under `bash`, with no network, a read-only root filesystem, a non-root user, CPU, file-size and process limits, a timeout, and a scrubbed environment.
+3. The sandbox returns the files the command created, changed or deleted, and the backend applies them.
+
+There is no persistent shell: the terminal remembers `cd` itself, but nothing else carries over between commands except files. The image includes Python 3.12 with pytest, numpy and pandas, plus Node.js/npm (offline), git and make. Dependencies can't be downloaded at run time.
+
+**Git hardening.** The backend runs git with hooks, fsmonitor, external diff and credential helpers disabled. Paths inside `.git` can never be written through the API or the AI. Clone and push are allowed only to public HTTPS hosts that pass the SSRF check.
+
+**Limits.** Files over 2 MB aren't opened in the editor. Projects over 40 MB can't be sent to the sandbox. Imports are capped at `WORKSPACE_IMPORT_MAX_MB`. Approvals are held in the backend process's memory, so run a single backend replica, or move the approval gate to Redis or Postgres before scaling out.
+
+## Deep research
+
+Open **Deep research** in the sidebar (`/research`). Ask a question and choose a depth:
+
+| Depth | Sub-questions | Sources read (at most) | Single-source claims re-verified |
+|---|---|---|---|
+| Quick | 3 | 6 | 0 |
+| Standard | 5 | 12 | 3 |
+| Deep | 7 | 20 | 6 |
+
+Each run is a background task. Its progress streams live: a phase bar, every search with its result count, every page read or failed, the claims extracted from each page, conflicts found and verification results. You can leave and come back, because the event history is stored and replayed. The pipeline lives in `backend/app/research/engine.py`:
+
+1. **Plan.** The question is split into sub-questions, each with search queries.
+2. **Search.** Every query is sent to the configured search provider (Tavily or Brave). Failed searches are recorded and shown.
+3. **Select.** Candidate pages are ranked by source reliability, search rank and how many queries found them. Every sub-question gets at least one page, and pages per site are capped so the sources stay diverse. Reliability (`reliability.py`) is a transparent domain heuristic (official/academic/reference > reputable secondary > unknown > user-generated), and its reason is shown next to each source.
+4. **Read.** Pages (HTML, text or PDF) are fetched through the SSRF guard. Pages that fail, or that have too little readable text (paywalls, logins), are listed as unread and never cited.
+5. **Extract.** For each page, the model lists claims, each with a **verbatim quote**. A claim is kept only if its quote actually appears in the downloaded text. Whitespace, case and typographic quotes are normalised, and an elided quote only counts if every fragment appears in order. Claims that fail this check are discarded and counted.
+6. **Cross-check.** For each sub-question, claims are grouped by agreement and **conflicts** are identified, with an assessment of which side is better supported. A claim counts as *corroborated* only when at least two **different sites** support it.
+7. **Verify.** Important claims that rest on a single source get their own search. Pages from other sites are read and checked for support or contradiction, again requiring a verified quote.
+8. **Write.** The report model receives only the verified evidence and must cite `[S#]`.
+   - Citations to sources that weren't read are removed, and the statement is marked *[unsupported]*.
+   - A sources list written by the model is discarded.
+   - The **claim verification table**, **source comparison table**, **sources list** (URLs and access dates) and **"How this research was done"** section are generated from the database. That section gives real counts of searches, failures, rejected quotes and removed citations.
+
+**Never claiming research that didn't happen:**
+
+| Situation | What happens |
+|---|---|
+| No search provider is configured (`TAVILY_API_KEY` / `BRAVE_API_KEY`) | Deep research refuses to start and says why. |
+| Every search fails, no page can be read, no verifiable evidence is found, or the draft cites none of the sources | The run ends as **failed with an explanation and no report**. |
+| A run completes | Each source in the report links to the page that was actually downloaded. Each claim shows its quote and the source it was verified in. |
+
+**Output.** The report contains an executive summary, findings for each sub-question, comparison tables, a section on conflicting information, and a confidence and limitations section. Every `[S#]` links to its source. The **Sources** tab shows reliability, how each page was found, and claims per source. The **Claims** tab shows every claim with its quote, status (corroborated, single source or conflicting) and the conflicts with their assessments. You can export to **Markdown** or **PDF** (fpdf2, with DejaVu fonts for Unicode).
+
+**Limits.**
+- Runs execute inside the backend process; at most 2 run at once per user. Unfinished runs are marked failed after a restart.
+- Reliability ratings and "corroborated" are signals, not proof, and the report says so.
+- Search quality depends on the provider. Pages that need JavaScript to render can't be read.
+
+## Document intelligence
+
+Open **Documents** in the sidebar (`/documents`). Files attached in chat go through the same pipeline. The code is in `backend/app/documents/`.
+
+**Formats** (`extract.py`). The type is detected from the file's content, not its name or MIME type.
+
+| Format | What is extracted |
+|---|---|
+| PDF | Text per page. Pages with no text layer are **OCR'd** (poppler renders the page, Tesseract reads it; up to 40 pages). Encrypted or damaged files get a clear error. |
+| DOCX | Paragraphs in document order, with heading sections and lists, plus tables (as real tables and as text). |
+| XLSX | Every sheet as a table with a detected header row. Formula cells are counted, and the file is flagged if it was saved without calculated values. |
+| CSV / TSV | Delimiter and encoding are detected; numbers are typed. |
+| PPTX | One block per slide: title, bullets with indentation, tables and speaker notes. |
+| TXT / Markdown / code | Markdown is split by heading. |
+| Images (PNG, JPEG, GIF, WebP, TIFF, BMP) | **OCR** with Tesseract. If a vision model is configured, an AI description of the image (charts, diagrams, layout) is also indexed. |
+
+Legacy `.doc`, `.xls` and `.ppt` files and ZIP archives are rejected with a message saying what to do instead.
+
+**Indexing and RAG** (`chunking.py`, `retrieval.py`):
+- Text is chunked within its location, so every passage remembers its page, slide, sheet rows or heading.
+- Chunks are embedded into pgvector when an embedding provider is configured. Chunks indexed while it was unavailable are backfilled by the maintenance task.
+- Retrieval is hybrid: vector similarity plus Postgres full-text search, merged by reciprocal-rank fusion.
+- Answers must cite passages as `[P#]`. A citation to a passage that wasn't retrieved is replaced with **[unsupported]**. Each citation shows the file, location and snippet.
+- If nothing relevant is found, the answer says so instead of guessing.
+
+**Operations.** Each is available in the UI, through the API (`/api/documents/...`), and as a chat tool.
+
+| Feature | How |
+|---|---|
+| Summarisation | Brief, bullet or detailed. Long documents are summarised in parts, then the parts are merged. A brief summary is made automatically after upload. |
+| Question answering | Over selected documents, or everything you can access, with cited passages. |
+| Multi-document comparison | 2–6 documents. Passages are retrieved from each one, and the result is a cited comparison table plus differences, similarities and gaps. |
+| Data extraction | Presets (invoice, contract, résumé, research paper) or custom fields. Each value comes with its source text, which is checked against the document. Values whose source text isn't found are marked **unverified**, and missing values are **not found** (never invented). Export as JSON or CSV. |
+| Table and spreadsheet analysis | Each table gets a column profile (type, empty count, distinct values, min/max/mean/sum). Questions are answered by model-written **pandas code run over all rows in the sandbox**, with the code and raw output shown. Tables can be downloaded as CSV. |
+| Document generation | DOCX, XLSX (typed numbers, frozen header row), PPTX (bullet and table slides, speaker notes), PDF or Markdown, optionally grounded in selected documents. The sources used are recorded on the new file, which is indexed like any upload. |
+| Chat tools | `search_documents`, `list_documents`, `read_document`, `summarize_document`, `compare_documents`, `extract_data`, `analyze_table`, `generate_document`. |
+
+**Privacy and access control** (`access.py`):
+- **Private by default.** Only the uploader (the owner) can see a document. Owners can share read-only with specific Aria users by email.
+- **What viewers can do.** Viewers can read, download, search, ask about, summarise, compare, extract from and analyse a shared document. They can't rename, reindex, reshare, see who else has access, or delete it; deleting only removes it from their own library.
+- **One access check for every path.** API routes, RAG retrieval (in SQL), chat attachments (filtered when the message is sent and again when the prompt is built), the conversation view and all chat tools use the same check. A document you can't read returns **404**, so ids can't be probed.
+- **Storage.** Files are stored under the owner's directory with random names. Downloads are sent as attachments with `nosniff` and a sandbox CSP; only images and PDFs display inline, so uploaded HTML or SVG can never run on Aria's origin.
+- **What leaves the server.** OCR runs locally. Document text goes to your configured model or embedding provider only when you use a feature that needs it (summaries, questions, comparison, extraction, analysis, generation, embeddings).
+
+## Multi-agent orchestration
+
+Open **Agent team** in the sidebar (`/team`), describe a goal, and a team of specialist agents works on it. The code is in `backend/app/team/`.
+
+| Agent | Tools | Role |
+|---|---|---|
+| Planning | (model only) | Breaks the goal into 1–8 tasks, assigns each to an agent and declares dependencies. |
+| Research | `web_search`, `fetch_url`, `search_documents`, `list_documents` | Finds and reads sources and returns findings attributed to them. |
+| Coding | `run_python` | Writes code, runs it in the sandbox, debugs it. |
+| Data Analyst | `analyze_table`, `read_document`, `search_documents`, `list_documents`, `run_python` | Computes figures with pandas over the user's spreadsheets or the data it is given. |
+| Writing | `generate_document`, `search_documents`, `read_document` | Writes the prose deliverable and can create DOCX/PDF/XLSX/PPTX/MD files. |
+| Browser | `open_page`, `read_page`, `find_in_page`, `follow_link` | Navigates specific sites like a person: reads pages, searches in them, follows links. Every hop is SSRF-guarded. |
+| Verification | `web_search`, `fetch_url`, `run_python`, `search_documents`, `read_document` | Settles conflicts between agents and checks the final answer independently. |
+
+**How a run works** (`orchestrator.py`):
+
+1. **Plan.** The Planning Agent sees the roster, including which tools aren't configured on this server, and returns a task graph. It is validated: unknown agents and dependencies are dropped, cycles are broken, and every adjustment is shown to you.
+2. **Delegate.** Each task starts as soon as its dependencies finish, and receives their results as input.
+   - **Parallel when safe:** tasks for agents without side effects run concurrently, up to 3 at a time. An agent that creates files (Writing) runs alone.
+   - **Retries:** a failed task is retried once with the error. If it still fails, tasks that depend on it are told what is missing.
+3. **Each specialist** runs its own tool loop and must finish by calling `submit_result` (status, result, sources, confidence, notes), with code-level checks:
+   - **No evidence, no "done":** Research, Data Analyst and Browser can't report done without at least one successful tool call. They are told once; after that the result is downgraded to *partial*.
+   - **Sources must be real:** a listed source that doesn't appear in the agent's own tool results is removed, and the removal is shown.
+4. **Reconcile.** The results are compared for contradictions. Factual or numeric conflicts go to the **Verification Agent**, which checks them with its tools; up to 3 are checked in parallel. A conflict counts as *resolved* only if the agent actually used a tool; otherwise both positions are reported as *unresolved*.
+5. **Synthesize.** The orchestrator combines the results using only what the agents produced. It applies the conflict resolutions and discloses failed or partial tasks.
+6. **Verify.** The Verification Agent checks the final answer against the agents' results and re-checks key facts and numbers with tools, then calls `submit_verdict` (`ok`, `issues`, `checked`). If it finds issues, the answer is revised once and checked again. The run ends **completed** or **completed with issues**, and the remaining issues are shown.
+
+**What you see.** A roster card for each agent shows whether it's idle or working, and on which task. Tasks are laid out in dependency columns (tasks in a column can run in parallel); each card shows live tool activity, the result, sources, confidence, notes and attempts. There's also a conflicts panel with the resolutions, the verification verdict with what was checked, and the final answer, which you can export as Markdown. Progress events are stored, so you can reload or come back later.
+
+**Limits.**
+- **No external actions.** Agents act only through the tools above. Actions with outside effects (email, Slack, HTTP writes) belong to the **Autonomous agent**, which asks for your approval.
+- **Single process.** Runs execute inside the backend process (2 at a time per user), and unfinished runs are marked failed after a restart.
+- **Conflict checks are capped.** At most 3 conflicts are checked with tools per run; any others are reported as unresolved.
+
 ## Quick start (Docker)
 
 You need Docker Desktop (Windows or macOS) or Docker Engine (Linux).
+
+**Windows, one click:** download `aria.bat` and double-click it from anywhere. If it isn't inside the project folder it downloads Aria into `%USERPROFILE%\Aria`, starts Docker Desktop if needed, creates `.env` with random secrets, opens it in Notepad for your model API key, starts everything, opens the browser and adds an **Aria** shortcut to your Desktop. `aria.bat stop`, `logs`, `status` and `update` (downloads the latest code, keeping your `.env`) cover the rest.
 
 ```bash
 cp .env.example .env
@@ -167,7 +351,7 @@ Then open **http://localhost:3000**, create an account and start chatting.
 | Models shown in the selector | `backend/models.json`: add or edit entries (`provider` is `anthropic`, `openai` or `ollama`). Only models whose provider has a key appear. |
 | Default and background models | `DEFAULT_MODEL_ID`, `UTILITY_MODEL_ID`. The utility model writes titles, plans, verification checks and memory extraction, so a cheap fast model works well here. |
 | Semantic search | `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL` / `EMBEDDING_DIM`. Without these, memory and document search use Postgres full-text search. **Set `EMBEDDING_DIM` before the first start**, because it is fixed into the schema. |
-| Web research | `TAVILY_API_KEY` or `BRAVE_API_KEY` enables `web_search`. `fetch_url` always works. |
+| Web research | `TAVILY_API_KEY` or `BRAVE_API_KEY` enables `web_search` and Deep research (which refuses to run without one). `fetch_url` always works. |
 
 Model IDs change over time. If a provider rejects a model name, update `backend/models.json`.
 
@@ -175,7 +359,7 @@ Model IDs change over time. If a provider rejects a model name, update `backend/
 
 - **Chat:** token streaming over SSE, a stop button (partial answers are kept), regenerate, copy, rename/delete chats, history grouped by date, a scroll-to-bottom button, drag-drop/paste uploads.
 - **Agent mode** (the ✨ toggle): every answer gets a visible plan, tool calls and a self-check. Without the toggle, Aria still plans automatically for complex requests and verifies any answer that used tools.
-- **Documents:** PDF, DOCX, text and code files are extracted and chunked, and embedded too when embeddings are configured. Small files go straight into context; large ones are read through `search_documents`.
+- **Documents:** PDF, DOCX, XLSX, CSV, PPTX, text/code and images (with OCR) are extracted, chunked with page/slide/sheet locations and indexed for RAG. Small files go straight into context; large ones are read through the document tools. See [Document intelligence](#document-intelligence).
 - **Images:** sent to vision-capable models. Aria tells you if the selected model can't see images.
 - **Memory:** Aria proposes durable facts it learns and you approve them inline or under *Account → Memory*, where you can also search, correct, pin, archive, export, import and delete. See [Memory architecture](#memory-architecture).
 - **Long conversations:** older turns are condensed automatically into a rolling summary plus searchable sections, so details from far back can still be recalled.
@@ -206,15 +390,21 @@ cd frontend && npm install && npm run dev        # http://localhost:3000, proxie
 ## Tests
 
 ```bash
-cd backend && pytest            # 86 tests (incl. 10 autonomous-run scenarios: approval granted/denied,
+cd backend && pytest            # 156 tests (incl. 10 autonomous-run scenarios: approval granted/denied,
                                 # grounding guard, retry, re-plan, remediation, cancel, report): stream parsers (incl. thinking blocks), agent loop, reasoning
                                 # engine (analyzer, clarifier, planner, verifier, state, scratchpad privacy),
                                 # memory (privacy rules, scoring, rank fusion, extraction, compaction),
-                                # tools, SSRF guard, chunking, PDF extraction, sandbox
-# Memory integration tests against real PostgreSQL + pgvector (load db/init/01-schema.sh into an
+                                # coding workspace (path safety, edits, git, checkpoints, sandbox commands,
+                                # approvals, code search), deep research (quote verification, citation
+                                # validation, conflicts, source selection, report, PDF), documents (every
+                                # format, OCR, chunk locations, profiling, generation, citations, access
+                                # control between users), agent team (plan validation, parallel scheduling,
+                                # side-effect isolation, grounding, conflicts, verification), tools, SSRF guard,
+                                # chunking, PDF extraction, sandbox
+# Integration tests against real PostgreSQL + pgvector (load db/init/01-schema.sh into an
 # empty database first; skipped unless the URL is set):
-TEST_DATABASE_URL=postgresql://postgres@localhost:5432/aria_test pytest tests/test_memory_pg.py
-cd frontend && npm test         # SSE parser
+TEST_DATABASE_URL=postgresql://postgres@localhost:5432/aria_test pytest tests/test_memory_pg.py tests/test_workspace_pg.py tests/test_research_pg.py tests/test_documents_pg.py tests/test_team_pg.py
+cd frontend && npm test         # SSE and diff parsers, citation linking, team waves/agent state
 ```
 
 The orchestrator tests use a scripted provider *in the test suite only*, so plan → tool → verify → revise can be checked deterministically. The application itself always calls real APIs.

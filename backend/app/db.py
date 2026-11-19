@@ -79,7 +79,7 @@ async def get_user(user_id: str) -> dict | None:
 async def list_conversations(user_id: str, limit: int = 200) -> list[dict]:
     return rows(await pool().fetch(
         "SELECT id, title, model_id, created_at, updated_at FROM conversations "
-        "WHERE user_id=$1 ORDER BY updated_at DESC LIMIT $2", user_id, limit))
+        "WHERE user_id=$1 AND workspace_id IS NULL ORDER BY updated_at DESC LIMIT $2", user_id, limit))
 
 
 async def create_conversation(user_id: str, model_id: str | None) -> dict:
@@ -178,8 +178,13 @@ MIGRATIONS = [
 
 async def migrate(embedding_dim: int = 1536) -> None:
     from .memory.store import MIGRATIONS as MEMORY_MIGRATIONS  # 004 — advanced memory
+    from .workspace.store import MIGRATIONS as WORKSPACE_MIGRATIONS  # 005 — coding workspaces
+    from .research.store import MIGRATIONS as RESEARCH_MIGRATIONS  # 006 — deep research
+    from .documents.store import MIGRATIONS as DOCUMENT_MIGRATIONS  # 007 — document intelligence
+    from .team.store import MIGRATIONS as TEAM_MIGRATIONS  # 008 — multi-agent orchestration
     async with pool().acquire() as c:
-        for stmt in MIGRATIONS + MEMORY_MIGRATIONS:
+        for stmt in (MIGRATIONS + MEMORY_MIGRATIONS + WORKSPACE_MIGRATIONS + RESEARCH_MIGRATIONS + DOCUMENT_MIGRATIONS
+                     + TEAM_MIGRATIONS):
             await c.execute(stmt.replace("{DIM}", str(int(embedding_dim))))
 
 
@@ -226,12 +231,6 @@ async def create_file(user_id: str, **f: Any) -> dict:
         f.get("text_content"), f.get("status", "ready")))  # type: ignore[return-value]
 
 
-async def get_files(user_id: str, file_ids: list[str]) -> list[dict]:
-    if not file_ids:
-        return []
-    return rows(await pool().fetch("SELECT * FROM files WHERE user_id=$1 AND id = ANY($2::uuid[])", user_id, file_ids))
-
-
 async def list_files(user_id: str) -> list[dict]:
     return rows(await pool().fetch(
         "SELECT id, filename, mime_type, size_bytes, kind, status, created_at FROM files WHERE user_id=$1 "
@@ -243,27 +242,3 @@ async def delete_file(user_id: str, file_id: str) -> dict | None:
                                      file_id, user_id))
 
 
-async def add_chunks(user_id: str, file_id: str, chunks: list[str], embeddings: list[list[float]] | None) -> None:
-    async with pool().acquire() as c, c.transaction():
-        await c.executemany(
-            "INSERT INTO document_chunks(file_id, user_id, idx, content, embedding) VALUES ($1,$2,$3,$4,$5::vector)",
-            [(file_id, user_id, i, ch, vec(embeddings[i]) if embeddings else None) for i, ch in enumerate(chunks)])
-
-
-async def search_chunks(user_id: str, query: str, embedding: list[float] | None, file_ids: list[str] | None,
-                        k: int = 6) -> list[dict]:
-    """Hybrid retrieval: vector similarity when embeddings exist, else Postgres full-text search."""
-    scope = "AND c.file_id = ANY($3::uuid[])" if file_ids else ""
-    if embedding is not None:
-        sql = (f"SELECT c.content, c.idx, f.filename, 1 - (c.embedding <=> $2::vector) AS score "
-               f"FROM document_chunks c JOIN files f ON f.id=c.file_id "
-               f"WHERE c.user_id=$1 AND c.embedding IS NOT NULL {scope} ORDER BY c.embedding <=> $2::vector LIMIT {int(k)}")
-        args: list[Any] = [user_id, vec(embedding)]
-    else:
-        sql = (f"SELECT c.content, c.idx, f.filename, ts_rank(c.tsv, q) AS score "
-               f"FROM document_chunks c JOIN files f ON f.id=c.file_id, websearch_to_tsquery('english', $2) q "
-               f"WHERE c.user_id=$1 {scope} AND c.tsv @@ q ORDER BY score DESC LIMIT {int(k)}")
-        args = [user_id, or_query(query)]
-    if file_ids:
-        args.append(file_ids)
-    return rows(await pool().fetch(sql, *args))
