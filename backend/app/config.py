@@ -45,6 +45,23 @@ class Settings(BaseSettings):
     sandbox_url: str | None = "http://sandbox:8800"
     sandbox_token: str | None = None
 
+    # Action tools for the autonomous agent (each is enabled only when configured)
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+    slack_webhook_url: str | None = None
+    enable_http_tool: bool = True
+
+    # Autonomous runs
+    autonomy_max_plan_steps: int = 12
+    autonomy_step_retries: int = 2          # extra attempts per step before re-planning
+    autonomy_max_replans: int = 2
+    autonomy_calls_per_step: int = 10        # model calls (tool rounds) per step attempt
+    autonomy_approval_timeout_min: int = 30
+    autonomy_max_concurrent_runs: int = 3    # per user
+
     # Agent
     max_agent_steps: int = 8
     max_revisions: int = 1

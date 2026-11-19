@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Union
 
 
 @dataclass
@@ -20,9 +20,25 @@ class Tool:
     parameters: dict  # JSON Schema
     run: Callable[[dict, ToolContext], Awaitable[str]]
     timeout: float = 60.0
+    # Permission level: True / a predicate on args => the action has external side effects and needs the
+    # user's explicit approval before it runs (autonomous agent). False => safe (read-only or sandboxed).
+    requires_approval: Union[bool, Callable[[dict], bool]] = False
+    describe: Callable[[dict], str] | None = None  # human-readable summary shown on the approval card
 
     def spec(self) -> dict:
         return {"name": self.name, "description": self.description, "parameters": self.parameters}
+
+    def needs_approval(self, args: dict) -> bool:
+        r = self.requires_approval
+        return bool(r(args)) if callable(r) else bool(r)
+
+    def summary(self, args: dict) -> str:
+        if self.describe:
+            try:
+                return self.describe(args)
+            except Exception:  # noqa: BLE001
+                pass
+        return f"{self.name}({', '.join(f'{k}={str(v)[:60]!r}' for k, v in args.items())})"
 
 
 class ToolRegistry:
@@ -37,6 +53,15 @@ class ToolRegistry:
 
     def names(self) -> list[str]:
         return list(self._tools)
+
+    def get(self, name: str) -> Tool | None:
+        return self._tools.get(name)
+
+    def catalog(self) -> list[dict]:
+        """Tool list for planners: name, description and whether it needs approval."""
+        return [{"name": t.name, "description": t.description.split(". ")[0],
+                 "needs_approval": t.requires_approval is True or callable(t.requires_approval)}
+                for t in self._tools.values()]
 
     async def execute(self, name: str, args: dict, ctx: ToolContext, max_chars: int = 12_000) -> tuple[str, bool]:
         """Returns (output, is_error). Never raises: errors are reported back to the model so it can recover."""

@@ -47,6 +47,44 @@ Effort scales with complexity: no extra reasoning for simple tasks, low or mediu
 
 In the chat, an **Understanding** panel shows the parts the request was split into and any interpretation, assumptions or missing information, followed by the plan, the tool calls and the self-check result.
 
+## Autonomous agent
+
+Open **Autonomous agent** in the sidebar (`/agent`), describe a goal and press **Start**. The code is in `backend/app/autonomy/`:
+
+```
+goal ─► plan (GoalPlanner: steps, tool for each step, success criteria — only tools that actually exist)
+     ─► execute each step (StepExecutor: real tool calls, ends with complete_step)
+           ├─ sensitive action? ─► PermissionGate: approval card in the UI, waits for you (approve / deny / timeout)
+           ├─ tool error? ─► the model sees the error and adapts; up to N retries per step, with backoff
+           └─ step still failing? ─► re-plan the remaining steps around the failure (bounded)
+     ─► verify the goal against the real action log (claims without a tool action don't count)
+           └─ partially done? ─► one remediation pass
+     ─► report: steps, actions, approvals, errors and files are generated from recorded data;
+                the model writes only a short summary of those facts
+```
+
+**Real actions only:**
+- A step that needs a tool cannot be marked done unless a tool call actually succeeded. A "done" claim without one is rejected, and the model has to do the work.
+- Tools are only available when they're configured. If no SMTP server is set, there is no `send_email`, so the agent can't pretend to send email. The planner also drops any tool that doesn't exist.
+
+**Tools and permissions:**
+
+| Tool | Effect | Needs approval |
+|---|---|---|
+| `web_search`, `fetch_url` | read the web | no |
+| `run_python` | sandboxed computation | no |
+| `search_documents`, `save_memory` | your Aria data | no |
+| `create_file` | creates a downloadable file in your Aria library | no |
+| `http_request` | external APIs | **yes**, for anything other than GET or HEAD |
+| `send_email` | SMTP (`SMTP_*` in `.env`) | **always** |
+| `post_slack_message` | Slack webhook (`SLACK_WEBHOOK_URL`) | **always** |
+
+To add a tool, create a `Tool(...)` with `requires_approval=True` (or a predicate on its arguments) and register it in `autonomy/manager.py:build_agent_tools`.
+
+**Activity panel:** a progress bar, approval cards (with the exact parameters), the current task with its live tool call, the plan with each step's status, attempts and result, errors and recovery, verification, and a live timeline. Events stream over SSE and are stored, so you can reload the page or come back later and see the full history.
+
+**Limits:** you can set the limits in `.env` (`AUTONOMY_*`): retries per step, re-plans, model calls per step, approval timeout and concurrent runs. Runs execute inside the backend process. If the server restarts mid-run, that run is marked as interrupted rather than silently resumed.
+
 ## Quick start (Docker)
 
 You need Docker Desktop (Windows or macOS) or Docker Engine (Linux).
@@ -109,7 +147,8 @@ cd frontend && npm install && npm run dev        # http://localhost:3000, proxie
 ## Tests
 
 ```bash
-cd backend && pytest            # 47 tests: stream parsers (incl. thinking blocks), agent loop, reasoning
+cd backend && pytest            # 57 tests (incl. 10 autonomous-run scenarios: approval granted/denied,
+                                # grounding guard, retry, re-plan, remediation, cancel, report): stream parsers (incl. thinking blocks), agent loop, reasoning
                                 # engine (analyzer, clarifier, planner, verifier, state, scratchpad privacy),
                                 # memory, tools, SSRF guard, chunking, PDF extraction, sandbox
 cd frontend && npm test         # SSE parser

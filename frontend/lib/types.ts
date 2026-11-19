@@ -66,3 +66,36 @@ export type ServerMessage = {
 };
 
 export type Memory = { id: string; content: string; created_at: string };
+
+// ---------------- autonomous agent ----------------
+export type RunStatus = "planning" | "running" | "awaiting_approval" | "verifying" | "completed"
+  | "completed_with_issues" | "failed" | "cancelled";
+
+export type AgentStep = {
+  id: string; idx: number; title: string; description: string; tool: string; success_criteria: string;
+  status: "pending" | "running" | "done" | "failed" | "skipped"; attempts: number; result: string; error: string;
+  origin: "plan" | "replan" | "remediation"; started_at: string | null; finished_at: string | null;
+};
+
+export type AgentApproval = {
+  id: string; run_id: string; step_idx: number; tool: string; args: Record<string, unknown>; summary: string;
+  status: "pending" | "approved" | "denied" | "expired"; created_at: string;
+};
+
+export type AgentAction = {
+  step_idx: number; tool: string; args_summary: string; ok: boolean; output: string; approval: string | null;
+};
+
+export type AgentRun = {
+  id: string; goal: string; status: RunStatus; model_id: string | null; report: string; error: string;
+  verification: { achieved: string; issues: string[]; evidence: string } | null;
+  created_at: string; updated_at: string; finished_at: string | null;
+};
+
+export type AgentRunDetail = AgentRun & {
+  active: boolean; steps: AgentStep[]; approvals: AgentApproval[]; actions: AgentAction[];
+};
+
+export type AgentEvent = { seq: number; type: string; data: any; at: string };
+
+export type ToolInfo = { name: string; description: string; needs_approval: boolean };

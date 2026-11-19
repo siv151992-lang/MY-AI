@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useTheme } from "next-themes";
-import { Brain, Check, LogOut, Monitor, Moon, MoreHorizontal, PanelLeftClose, Pencil, SquarePen, Sun, Trash2, X } from "lucide-react";
+import Link from "next/link";
+import { Bot, Brain, Check, LogOut, Monitor, Moon, MoreHorizontal, PanelLeftClose, Pencil, SquarePen, Sun, Trash2, X } from "lucide-react";
 import type { Conversation, User } from "@/lib/types";
 import { cn, groupByDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -51,6 +52,9 @@ export function Sidebar({ open, onClose, user, conversations, activeId, onSelect
         <div className="px-2">
           <Button variant="ghost" className="w-full justify-start text-brand hover:text-brand" onClick={onNew}>
             <SquarePen /> New chat
+          </Button>
+          <Button asChild variant="ghost" className="w-full justify-start">
+            <Link href="/agent"><Bot /> Autonomous agent</Link>
           </Button>
         </div>
         <nav className="thin-scroll mt-2 flex-1 overflow-y-auto px-2 pb-4">
