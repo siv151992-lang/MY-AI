@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from .. import db
-from ..agent import memory_engine
 from ..agent.orchestrator import AgentConfig, run_agent
 from ..agent.prompts import build_system_prompt
 from ..agent.reasoning import ReasoningEngine
@@ -20,6 +19,8 @@ from ..agent.tools.web import make_web_tools
 from ..config import get_settings
 from ..llm import registry
 from ..llm.formats import text_msg
+from ..memory import service as memory
+from ..memory.context import Budget
 from .documents import FULL_TEXT_LIMIT
 
 log = logging.getLogger("aria.chat")
@@ -63,23 +64,6 @@ async def _user_content(user_id: str, text: str, file_ids: list[str], vision: bo
     return {"role": "user", "content": parts}, docs
 
 
-async def _history(user_id: str, conv: dict, prior: list[dict]) -> tuple[list[dict], str | None]:
-    """Recent turns verbatim; older turns folded into a rolling summary (long-conversation support)."""
-    s = get_settings()
-    msgs = [text_msg(m["role"], m["content"] or "(no content)") for m in prior]
-    start = memory_engine.split_history(msgs, s.context_token_budget)
-    summary = conv.get("summary")
-    if start > conv.get("summarized_upto", 0):
-        try:
-            spec = registry.utility_model()
-            summary = await memory_engine.summarize(registry.provider_for(spec), spec.model,
-                                                    msgs[conv.get("summarized_upto", 0):start], summary)
-            await db.update_conversation(user_id, conv["id"], summary=summary, summarized_upto=start)
-        except Exception:
-            log.exception("summarisation failed; truncating instead")
-    return msgs[start:], summary if start > 0 else None
-
-
 async def _title(user_id: str, conv_id: str, user_text: str) -> str | None:
     try:
         spec = registry.utility_model()
@@ -120,15 +104,22 @@ async def respond(*, user: dict, conv: dict, text: str, file_ids: list[str], mod
         await db.update_conversation(user["id"], conv["id"], model_id=spec.id)
 
     user_msg, docs = await _user_content(user["id"], text, file_ids, spec.vision)
-    history, summary = await _history(user["id"], conv, prior)
-    memories = await memory_engine.retrieve_memories(user["id"], text)
+    budget = Budget(history=s.context_token_budget)
+    if memory.plan_needs_compaction(conv, prior, budget.history):
+        yield {"type": "status", "text": "Condensing earlier conversation"}
+    history, summary, compacted = await memory.prepare_history(user["id"], conv, prior, budget.history)
+    recall = await memory.recall(user["id"], conv, text, budget)
+    mem_public = recall.public()
+    if mem_public["memories"] or mem_public["recalled"] or compacted:
+        yield {"type": "memory_context", **mem_public, "compacted": compacted}
     tools = build_tools()
     state = conv.get("state") or {}
     state_text = render_state(state)
     last_asked = bool(prior and prior[-1]["role"] == "assistant" and (prior[-1].get("meta") or {}).get("clarification"))
 
     def build_system(guidance: str) -> str:
-        return build_system_prompt(user_name=user.get("name", ""), memories=memories, conversation_summary=summary,
+        return build_system_prompt(user_name=user.get("name", ""), memories=recall.memories,
+                                   recalled=recall.recalled, conversation_summary=summary,
                                    conversation_state=state_text, documents=docs, reasoning_guidance=guidance,
                                    tool_names=tools.names() if spec.tools else [])
 
@@ -163,14 +154,28 @@ async def respond(*, user: dict, conv: dict, text: str, file_ids: list[str], mod
             yield {"type": "error", "message": "The model returned an empty response. Try again or switch models."}
         return
     final["meta"]["model"] = spec.id
+    final["meta"]["memory"] = {"ids": [m["id"] for m in recall.memories], "recalled": len(recall.recalled),
+                               "compacted": compacted}  # ids only: deleting a memory leaves no copy behind
     msg = await db.add_message(conv["id"], "assistant", final["content"], [], final["meta"])
     yield {"type": "done", "message": msg}
     if not prior and not regenerate:
         title = await _title(user["id"], conv["id"], text)
         if title:
             yield {"type": "title", "title": title}
-    _spawn(memory_engine.extract_and_store(user["id"], conv["id"], text, final["content"]))
     _spawn(_update_state(user["id"], conv["id"], state, text, final["content"]))
+    # Learn from the exchange. Suggestions are streamed so the user can approve them inline; if the client has
+    # gone, the task still finishes and the suggestions wait in the Memory panel.
+    learn = asyncio.create_task(memory.propose_from_exchange(user["id"], conv, text, final["content"]))
+    _background.add(learn)
+    learn.add_done_callback(_background.discard)
+    try:
+        learned = await asyncio.wait_for(asyncio.shield(learn), timeout=30)
+    except asyncio.TimeoutError:
+        learned = []
+    if learned:
+        yield {"type": "memory_suggestions", "items": [
+            {"id": m["id"], "content": m["content"], "category": m["category"], "status": m["status"],
+             "importance": m["importance"], "supersedes_id": m.get("supersedes_id")} for m in learned]}
 
 
 async def _update_state(user_id: str, conv_id: str, state: dict, user_text: str, answer: str) -> None:

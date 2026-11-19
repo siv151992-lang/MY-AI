@@ -8,9 +8,11 @@ import { Button } from "@/components/ui/button";
 import { AgentActivity } from "./AgentActivity";
 import { Markdown } from "./Markdown";
 import { Logo } from "./Logo";
+import { MemorySuggestions, MemoryUsed } from "./MemoryNotes";
 
-export function MessageView({ m, isLast, onRegenerate, busy }: {
+export function MessageView({ m, isLast, onRegenerate, busy, onOpenMemory }: {
   m: ChatMessage; isLast: boolean; onRegenerate: () => void; busy: boolean;
+  onOpenMemory?: (tab?: "active" | "pending" | "chat") => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -45,6 +47,7 @@ export function MessageView({ m, isLast, onRegenerate, busy }: {
     <div className="group flex gap-3 animate-fade-up sm:gap-4">
       <div className="mt-1 hidden shrink-0 sm:block"><Logo className={cn("h-6 w-6", m.streaming && "animate-spin [animation-duration:3s]")} /></div>
       <div className="min-w-0 flex-1">
+        {m.memory && <MemoryUsed memory={m.memory} onOpen={() => onOpenMemory?.(m.memory?.compacted || m.memory?.recalled ? "chat" : "active")} />}
         <AgentActivity m={m} />
         {empty && !m.status && (
           <div className="flex gap-1 py-3">
@@ -64,6 +67,7 @@ export function MessageView({ m, isLast, onRegenerate, busy }: {
           </div>
         )}
         {m.interrupted && !m.streaming && <p className="mt-2 text-xs text-muted-foreground">Response stopped.</p>}
+        {m.suggestions && m.suggestions.length > 0 && <MemorySuggestions items={m.suggestions} onOpen={() => onOpenMemory?.("pending")} />}
         {!m.streaming && (m.content || m.error) && (
           <div className={cn("mt-2 flex items-center gap-1 text-muted-foreground transition-opacity", isLast ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
             {m.content && (

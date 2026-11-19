@@ -176,10 +176,11 @@ MIGRATIONS = [
 ]
 
 
-async def migrate() -> None:
+async def migrate(embedding_dim: int = 1536) -> None:
+    from .memory.store import MIGRATIONS as MEMORY_MIGRATIONS  # 004 — advanced memory
     async with pool().acquire() as c:
-        for stmt in MIGRATIONS:
-            await c.execute(stmt)
+        for stmt in MIGRATIONS + MEMORY_MIGRATIONS:
+            await c.execute(stmt.replace("{DIM}", str(int(embedding_dim))))
 
 
 async def touch_conversation(conv_id: str) -> None:
@@ -266,31 +267,3 @@ async def search_chunks(user_id: str, query: str, embedding: list[float] | None,
     if file_ids:
         args.append(file_ids)
     return rows(await pool().fetch(sql, *args))
-
-
-# ---------- memories ----------
-async def list_memories(user_id: str) -> list[dict]:
-    return rows(await pool().fetch(
-        "SELECT id, content, created_at FROM memories WHERE user_id=$1 ORDER BY created_at DESC", user_id))
-
-
-async def add_memory(user_id: str, content: str, embedding: list[float] | None, conv_id: str | None) -> dict:
-    return row(await pool().fetchrow(
-        "INSERT INTO memories(user_id, content, embedding, source_conversation_id) VALUES ($1,$2,$3::vector,$4) "
-        "RETURNING id, content, created_at", user_id, content, vec(embedding), conv_id))  # type: ignore[return-value]
-
-
-async def delete_memory(user_id: str, mem_id: str) -> bool:
-    return (await pool().execute("DELETE FROM memories WHERE id=$1 AND user_id=$2", mem_id, user_id)).endswith("1")
-
-
-async def search_memories(user_id: str, query: str, embedding: list[float] | None, k: int = 8) -> list[dict]:
-    if embedding is not None:
-        return rows(await pool().fetch(
-            f"SELECT id, content, 1 - (embedding <=> $2::vector) AS score FROM memories "
-            f"WHERE user_id=$1 AND embedding IS NOT NULL ORDER BY embedding <=> $2::vector LIMIT {int(k)}",
-            user_id, vec(embedding)))
-    return rows(await pool().fetch(
-        f"SELECT id, content, ts_rank(tsv, q) AS score FROM memories, websearch_to_tsquery('english', $2) q "
-        f"WHERE user_id=$1 AND (tsv @@ q OR $2 = '') ORDER BY score DESC, created_at DESC LIMIT {int(k)}",
-        user_id, or_query(query)))

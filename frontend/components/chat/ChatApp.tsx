@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowDown, Loader2, PanelLeft, SquarePen } from "lucide-react";
+import { ArrowDown, Brain, Loader2, PanelLeft, SquarePen } from "lucide-react";
 import { api, streamChat, type StreamEvent } from "@/lib/api";
 import type { ChatMessage, Conversation, FileRef, ModelInfo, ServerMessage, User } from "@/lib/types";
 import { cn, uid } from "@/lib/utils";
@@ -19,6 +19,9 @@ function fromServer(m: ServerMessage): ChatMessage {
     analysis: m.meta?.analysis ?? null, clarification: m.meta?.clarification,
     plan: m.meta?.plan ?? null, tools: m.meta?.tools ?? [], verification: m.meta?.verification ?? null,
     revised: (m.meta?.revisions ?? 0) > 0, interrupted: m.meta?.interrupted, model: m.meta?.model,
+    memory: m.meta?.memory
+      ? { used: m.meta.memory.ids.map((id) => ({ id })), recalled: m.meta.memory.recalled, compacted: m.meta.memory.compacted }
+      : null,
   };
 }
 
@@ -34,6 +37,8 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
   const [agentMode, setAgentMode] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryTab, setMemoryTab] = useState<"active" | "pending" | "chat">("active");
+  const openMemory = (tab: "active" | "pending" | "chat" = "active") => { setMemoryTab(tab); setMemoryOpen(true); };
   const [banner, setBanner] = useState<string | null>(null);
   const [prefill, setPrefill] = useState<{ text: string; n: number }>();
   const [atBottom, setAtBottom] = useState(true);
@@ -146,6 +151,10 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
       case "reset": patchLast((m) => ({ ...m, content: "", revised: true })); break;
       case "error": patchLast((m) => ({ ...m, error: ev.message, status: null })); break;
       case "done": patchLast((m) => ({ ...m, id: ev.message.id, model: ev.message.meta?.model, status: null })); break;
+      case "memory_context":
+        patchLast((m) => ({ ...m, memory: { used: ev.memories ?? [], recalled: (ev.recalled ?? []).length, compacted: !!ev.compacted } }));
+        break;
+      case "memory_suggestions": patchLast((m) => ({ ...m, suggestions: ev.items })); break;
       case "title":
         setConversations((cs) => cs.map((c) => (c.id === convId ? { ...c, title: ev.title } : c)));
         break;
@@ -236,7 +245,7 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
     <div className="flex h-dvh overflow-hidden">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} user={user} conversations={conversations}
         activeId={activeId} onSelect={selectConversation} onNew={newChat} onRename={rename} onDelete={remove}
-        onLogout={logout} onMemory={() => setMemoryOpen(true)} />
+        onLogout={logout} onMemory={() => openMemory("active")} />
       <main className="relative flex min-w-0 flex-1 flex-col">
         <header className="flex h-12 shrink-0 items-center gap-1 px-2">
           {!sidebarOpen && (
@@ -246,6 +255,9 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
             </>
           )}
           <div className="min-w-0 flex-1 truncate px-2 text-sm font-medium">{title}</div>
+          {activeId && (
+            <Button variant="ghost" size="icon" title="Memory for this chat" onClick={() => openMemory("chat")}><Brain /></Button>
+          )}
         </header>
         {banner && (
           <div className="mx-auto mb-2 flex w-full max-w-3xl items-center justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm">
@@ -266,7 +278,7 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
               <div className="mx-auto w-full max-w-3xl space-y-8 px-4 pb-10 pt-4">
                 {loadingConv && <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
                 {messages.map((m, i) => (
-                  <MessageView key={m.key} m={m} busy={busy} onRegenerate={regenerate}
+                  <MessageView key={m.key} m={m} busy={busy} onRegenerate={regenerate} onOpenMemory={openMemory}
                     isLast={i === messages.length - 1 && m.role === "assistant"} />
                 ))}
               </div>
@@ -285,7 +297,7 @@ export function ChatApp({ initialConversationId }: { initialConversationId: stri
           </>
         )}
       </main>
-      <MemoryDialog open={memoryOpen} onOpenChange={setMemoryOpen} />
+      <MemoryDialog open={memoryOpen} onOpenChange={setMemoryOpen} conversationId={activeId} initialTab={memoryTab} />
     </div>
   );
 }
