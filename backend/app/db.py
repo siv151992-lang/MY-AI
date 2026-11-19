@@ -176,16 +176,57 @@ MIGRATIONS = [
 ]
 
 
-async def migrate(embedding_dim: int = 1536) -> None:
-    from .memory.store import MIGRATIONS as MEMORY_MIGRATIONS  # 004 — advanced memory
-    from .workspace.store import MIGRATIONS as WORKSPACE_MIGRATIONS  # 005 — coding workspaces
-    from .research.store import MIGRATIONS as RESEARCH_MIGRATIONS  # 006 — deep research
+VECTOR_ENABLED = True  # set by ensure_extensions(); False when pgvector isn't installed (native Windows setup)
+
+
+async def ensure_extensions(c: asyncpg.Connection, disable_pgvector: bool = False) -> bool:
+    """Enable pgvector when the server has it. Otherwise create a stand-in `vector` domain so the schema and
+    `::vector` casts still work; embeddings are then switched off and search uses full-text only."""
+    global VECTOR_ENABLED
+    try:
+        await c.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+    except asyncpg.PostgresError:
+        pass  # only needed by old PostgreSQL versions; gen_random_uuid() is built in since 13
+    has_vector = False
+    if not disable_pgvector:
+        try:
+            await c.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            has_vector = True
+        except asyncpg.PostgresError:
+            has_vector = False
+    if not has_vector:
+        exists = await c.fetchval("SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace "
+                                  "WHERE t.typname = 'vector' AND n.nspname = 'public'")
+        if not exists:
+            await c.execute("CREATE DOMAIN vector AS text")
+        elif await c.fetchval("SELECT 1 FROM pg_extension WHERE extname = 'vector'"):
+            has_vector = True  # extension already installed earlier (disable flag only affects new installs)
+    VECTOR_ENABLED = has_vector
+    return has_vector
+
+
+def _for_mode(stmt: str, dim: int, vector: bool) -> str | None:
+    if vector:
+        return stmt.replace("{DIM}", str(int(dim)))
+    if "vector_cosine_ops" in stmt:
+        return None  # vector indexes need pgvector
+    return stmt.replace("vector({DIM})", "vector")
+
+
+async def migrate(embedding_dim: int = 1536, disable_pgvector: bool = False) -> None:
     from .documents.store import MIGRATIONS as DOCUMENT_MIGRATIONS  # 007 — document intelligence
+    from .memory.store import MIGRATIONS as MEMORY_MIGRATIONS  # 004 — advanced memory
+    from .research.store import MIGRATIONS as RESEARCH_MIGRATIONS  # 006 — deep research
+    from .schema import BASE  # 001 — base tables (previously created by db/init/01-schema.sh)
     from .team.store import MIGRATIONS as TEAM_MIGRATIONS  # 008 — multi-agent orchestration
+    from .workspace.store import MIGRATIONS as WORKSPACE_MIGRATIONS  # 005 — coding workspaces
     async with pool().acquire() as c:
-        for stmt in (MIGRATIONS + MEMORY_MIGRATIONS + WORKSPACE_MIGRATIONS + RESEARCH_MIGRATIONS + DOCUMENT_MIGRATIONS
-                     + TEAM_MIGRATIONS):
-            await c.execute(stmt.replace("{DIM}", str(int(embedding_dim))))
+        vector = await ensure_extensions(c, disable_pgvector)
+        for stmt in (BASE + MIGRATIONS + MEMORY_MIGRATIONS + WORKSPACE_MIGRATIONS + RESEARCH_MIGRATIONS
+                     + DOCUMENT_MIGRATIONS + TEAM_MIGRATIONS):
+            sql = _for_mode(stmt, embedding_dim, vector)
+            if sql:
+                await c.execute(sql)
 
 
 async def touch_conversation(conv_id: str) -> None:

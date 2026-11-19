@@ -324,6 +324,36 @@ Open **Agent team** in the sidebar (`/team`), describe a goal, and a team of spe
 - **Single process.** Runs execute inside the backend process (2 at a time per user), and unfinished runs are marked failed after a restart.
 - **Conflict checks are capped.** At most 3 conflicts are checked with tools per run; any others are reported as unresolved.
 
+## Run without Docker (Windows)
+
+1. Download the project as a ZIP: https://github.com/siv151992-lang/MY-AI/archive/refs/heads/main.zip
+2. Extract it.
+3. Double-click **`aria-native.bat`**.
+
+No admin rights are needed. On the first run (15–30 minutes) it downloads private, portable copies of Python (via `uv`), Node.js 22, PostgreSQL 16 and MinGit into a `runtime` folder next to Aria. It then:
+- creates a local database on port 5433 (listening on 127.0.0.1 only) in `data\pgdata`, with a random password stored in `.env`;
+- installs and builds Aria;
+- starts three minimized windows (**Aria database**, **Aria backend**, **Aria web**);
+- opens http://127.0.0.1:3000 and adds an **Aria (no Docker)** Desktop shortcut.
+
+It installs nothing system-wide, except the Microsoft Visual C++ runtime if your PC doesn't have it yet (Windows asks for permission once).
+
+| | Docker | Without Docker |
+|---|---|---|
+| Chat, memory, documents, Q&A, comparison, extraction, generation, deep research, agent team | ✓ | ✓ |
+| Semantic (pgvector) search | ✓ | keyword (full-text) search instead |
+| Code execution: `run_python`, workspace terminal and tests, table analysis | ✓ isolated sandbox | **off**, because it can't be isolated safely on Windows without Docker |
+| OCR | ✓ | only if Tesseract is installed (`winget install UB-Mannheim.TesseractOCR`) |
+
+Commands, run from the project folder:
+- `aria-native.bat stop` stops Aria and its database.
+- `aria-native.bat logs` shows the logs.
+- `aria-native.bat update` downloads the latest version and keeps `.env` and `data`.
+
+Don't run it as administrator: PostgreSQL refuses to start with admin rights.
+
+The backend runs in this mode on any OS. It falls back automatically when pgvector is missing (`DISABLE_PGVECTOR=true` forces the fallback) and disables code execution with `SANDBOX_URL=off`. It also creates the whole schema itself (`backend/app/schema.py`), so it only needs an empty PostgreSQL database.
+
 ## Quick start (Docker)
 
 You need Docker Desktop (Windows or macOS) or Docker Engine (Linux).
@@ -390,7 +420,7 @@ cd frontend && npm install && npm run dev        # http://localhost:3000, proxie
 ## Tests
 
 ```bash
-cd backend && pytest            # 156 tests (incl. 10 autonomous-run scenarios: approval granted/denied,
+cd backend && pytest            # 159 tests (incl. 10 autonomous-run scenarios: approval granted/denied,
                                 # grounding guard, retry, re-plan, remediation, cancel, report): stream parsers (incl. thinking blocks), agent loop, reasoning
                                 # engine (analyzer, clarifier, planner, verifier, state, scratchpad privacy),
                                 # memory (privacy rules, scoring, rank fusion, extraction, compaction),
@@ -403,7 +433,7 @@ cd backend && pytest            # 156 tests (incl. 10 autonomous-run scenarios: 
                                 # chunking, PDF extraction, sandbox
 # Integration tests against real PostgreSQL + pgvector (load db/init/01-schema.sh into an
 # empty database first; skipped unless the URL is set):
-TEST_DATABASE_URL=postgresql://postgres@localhost:5432/aria_test pytest tests/test_memory_pg.py tests/test_workspace_pg.py tests/test_research_pg.py tests/test_documents_pg.py tests/test_team_pg.py
+TEST_DATABASE_URL=postgresql://postgres@localhost:5432/aria_test pytest tests/test_memory_pg.py tests/test_workspace_pg.py tests/test_research_pg.py tests/test_documents_pg.py tests/test_team_pg.py tests/test_native_mode_pg.py
 cd frontend && npm test         # SSE and diff parsers, citation linking, team waves/agent state
 ```
 

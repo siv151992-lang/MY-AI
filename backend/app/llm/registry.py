@@ -62,8 +62,9 @@ def provider_for(spec: ModelSpec) -> LLMProvider:
 
 async def embed(texts: list[str]) -> list[list[float]] | None:
     """Returns None when no embedding provider is configured (callers fall back to keyword search)."""
+    from .. import db
     s = get_settings()
-    if not s.embedding_provider or not texts:
+    if not s.embedding_provider or not texts or not db.VECTOR_ENABLED:
         return None
     prov = providers().get(s.embedding_provider)
     if not isinstance(prov, OpenAICompatProvider):

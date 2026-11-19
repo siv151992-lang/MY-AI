@@ -5,7 +5,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,11 +38,12 @@ class Settings(BaseSettings):
     embedding_provider: str | None = None  # "openai" | "ollama"
     embedding_model: str = "text-embedding-3-small"
     embedding_dim: int = 1536
+    disable_pgvector: bool = False  # force full-text-only search even if pgvector is installed
 
     # Tools
     tavily_api_key: str | None = None
     brave_api_key: str | None = None
-    sandbox_url: str | None = "http://sandbox:8800"
+    sandbox_url: str | None = "http://sandbox:8800"  # "off" (or empty) disables code execution
     sandbox_token: str | None = None
 
     # Action tools for the autonomous agent (each is enabled only when configured)
@@ -73,6 +74,11 @@ class Settings(BaseSettings):
     max_revisions: int = 1
     context_token_budget: int = 60_000
     rate_limit_per_minute: int = 20
+
+    @field_validator("sandbox_url", mode="before")
+    @classmethod
+    def _sandbox_off(cls, v):
+        return None if v is None or str(v).strip().lower() in ("", "off", "none", "false", "0", "disabled") else v
 
     @property
     def cors_origin_list(self) -> list[str]:

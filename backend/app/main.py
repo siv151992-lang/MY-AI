@@ -25,7 +25,11 @@ async def lifespan(app: FastAPI):
     s.upload_dir.mkdir(parents=True, exist_ok=True)
     s.workspace_root.mkdir(parents=True, exist_ok=True)
     await db.connect(s.database_url)
-    await db.migrate(s.embedding_dim)
+    await db.migrate(s.embedding_dim, s.disable_pgvector)
+    if not db.VECTOR_ENABLED:
+        log.warning("pgvector is not installed: semantic search is off, using full-text search only.")
+    if not s.sandbox_url:
+        log.warning("No sandbox configured: code execution (run_python, workspace commands, table analysis) is off.")
     from .autonomy.manager import get_manager
     await get_manager().recover_after_restart()
     from .research.manager import get_manager as research_manager
