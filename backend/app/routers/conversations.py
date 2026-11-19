@@ -127,7 +127,7 @@ async def send_message(conv_id: str, body: MessageIn, request: Request, user: di
         try:
             async for ev in chat.respond(user=user, conv=conv, text=body.content, file_ids=body.file_ids,
                                          model_id=body.model_id, agent_mode=body.agent_mode,
-                                         regenerate=body.regenerate):
+                                         regenerate=body.regenerate, skill_id=body.skill_id):
                 if await request.is_disconnected():
                     break
                 yield sse(ev)

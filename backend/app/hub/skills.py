@@ -78,7 +78,7 @@ def validate(data: dict) -> dict:
         inputs.append({"name": n, "label": str(i.get("label") or n)[:80], "required": bool(i.get("required")),
                        "default": str(i.get("default") or "")[:500]})
     for v in set(VAR.findall(instructions)) - seen:
-        inputs.append({"name": v, "label": v.replace("_", " ").capitalize(), "required": v == "input", "default": ""})
+        inputs.append({"name": v, "label": v.replace("_", " ").capitalize(), "required": True, "default": ""})
     if not inputs:
         inputs = [{"name": "input", "label": "Input", "required": True, "default": ""}]
     tools = [str(t)[:64] for t in (data.get("tools") or [])][:20]

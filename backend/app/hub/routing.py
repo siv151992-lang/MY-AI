@@ -34,7 +34,7 @@ SIMPLE = re.compile(r"^\s*(hi|hello|hey|thanks|thank you|ok|okay|yes|no|good (mo
 SCHEDULE = _P(r"every (day|morning|evening|week|monday|tuesday|wednesday|thursday|friday|hour)", r"daily", r"weekly",
               r"each (day|morning|week)", r"whenever", r"remind me", r"on a schedule", r"automatically every")
 TEAM = _P(r"and then", r"multiple (parts|steps|deliverables)", r"end[- ]to[- ]end", r"full report", r"plan and execute")
-BUILD = _P(r"build (me )?(a|an) (app|website|service|tool|cli|api|game)", r"scaffold", r"new project", r"repository",
+BUILD = _P(r"build (me )?(a|an) (\w+ ){0,2}(app|website|service|tool|cli|api|game)", r"scaffold", r"new project", r"repository",
            r"codebase", r"multi-file")
 DEEP_RESEARCH = _P(r"deep research", r"research report", r"literature review", r"market (research|analysis)",
                    r"competitive analysis", r"state of the art", r"comprehensive (overview|review|report)")
