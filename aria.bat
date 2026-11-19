@@ -139,9 +139,11 @@ if not defined HAS_PROVIDER (
   echo       - paste your key after ANTHROPIC_API_KEY=  or  OPENAI_API_KEY=
   echo       - or, for free local models with Ollama, delete the "# " before OLLAMA_BASE_URL
   echo       Optional: TAVILY_API_KEY or BRAVE_API_KEY turns on web search and Deep research.
-  echo     Save the file and close Notepad to continue.
   echo.
-  start /wait notepad ".env"
+  rem Windows 11 Notepad returns immediately, so wait for a key press instead of "start /wait"
+  start "" notepad ".env"
+  echo     When you have saved the file in Notepad, come back to this window and
+  pause
   call :check_provider
 )
 if not defined HAS_PROVIDER (
