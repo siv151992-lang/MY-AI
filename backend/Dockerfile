@@ -4,7 +4,15 @@ WORKDIR /app
 # git: coding workspaces are git repositories (run with hooks and external programs disabled)
 # fonts-dejavu-core: Unicode font for research report PDFs
 # tesseract-ocr + poppler-utils: OCR for images and scanned PDF pages (runs locally, nothing leaves the server)
-RUN apt-get update && apt-get install -y --no-install-recommends git fonts-dejavu-core tesseract-ocr poppler-utils && rm -rf /var/lib/apt/lists/*
+# Download Debian packages over HTTPS (some networks block plain HTTP on port 80) and retry on flaky links
+RUN set -eux; \
+    for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do \
+      if [ -f "$f" ]; then sed -i 's|http://deb.debian.org|https://deb.debian.org|g' "$f"; fi; \
+    done; \
+    printf 'Acquire::Retries "5";\n' > /etc/apt/apt.conf.d/80-retries; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends git fonts-dejavu-core tesseract-ocr poppler-utils; \
+    rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
