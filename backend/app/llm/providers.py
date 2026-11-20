@@ -123,9 +123,18 @@ class OpenAICompatProvider(LLMProvider):
             body["reasoning_effort"] = effort  # reasoning models: hidden reasoning, no temperature
         elif temperature is not None:
             body["temperature"] = temperature
-        async for ev in self._post_stream(f"{self.base_url}/chat/completions", self._headers(), body,
-                                          OpenAIStreamParser()):
-            yield ev
+        try:
+            async for ev in self._post_stream(f"{self.base_url}/chat/completions", self._headers(), body,
+                                              OpenAIStreamParser()):
+                yield ev
+        except ProviderError as e:
+            # Some local models can't call tools; answer without them instead of failing the chat.
+            if not (tools and self.name == "ollama" and "tool" in str(e).lower()):
+                raise
+            body.pop("tools", None)
+            async for ev in self._post_stream(f"{self.base_url}/chat/completions", self._headers(), body,
+                                              OpenAIStreamParser()):
+                yield ev
 
     async def embed(self, model: str, texts: list[str]) -> list[list[float]]:
         out: list[list[float]] = []

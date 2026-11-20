@@ -34,7 +34,59 @@ if exist "%~dp0docker-compose.yml" (
 if "%PROJECT:~-1%"=="\" set "PROJECT=%PROJECT:~0,-1%"
 
 set "MODE="
-if exist "%PROJECT%\aria-native.bat" call :pick_mode
+if exist "%PROJECT%\aria-native.bat" call rem --- Free local AI (Ollama): chat without an API key. Asked once; skipped when a key is set. ----
+:offer_local_ai
+if /i not "%CMD%"=="" if /i not "%CMD%"=="update" exit /b 0
+set "OLLAMA_EXE=%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
+if exist "%OLLAMA_EXE%" goto :local_ai_model
+where ollama >nul 2>&1 && (set "OLLAMA_EXE=ollama" & goto :local_ai_model)
+if exist "%PROJECT%\.aria-local-ai-asked" exit /b 0
+if exist "%PROJECT%\.env" (
+  findstr /r /c:"^ANTHROPIC_API_KEY=." /c:"^OPENAI_API_KEY=." "%PROJECT%\.env" >nul && exit /b 0
+)
+> "%PROJECT%\.aria-local-ai-asked" echo asked
+echo.
+echo [?] Aria can chat for free with AI that runs on this computer (Ollama) - no API key, no account.
+echo     It needs about 8 GB of RAM and downloads about 3 GB once. You can also skip this and paste an API key later.
+choice /c YN /m "    Install free local AI now"
+if errorlevel 2 exit /b 0
+where winget >nul 2>&1
+if not errorlevel 1 (
+  echo [*] Installing Ollama with winget...
+  winget install -e --id Ollama.Ollama --accept-source-agreements --accept-package-agreements --silent
+) else (
+  echo [*] Downloading the Ollama installer...
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -UseBasicParsing 'https://ollama.com/download/OllamaSetup.exe' -OutFile (Join-Path $env:TEMP 'OllamaSetup.exe')"
+  if errorlevel 1 (
+    echo [!] Could not download Ollama. Get it from https://ollama.com/download - Aria finds it automatically.
+    exit /b 0
+  )
+  echo [*] Follow the Ollama installer, then come back to this window.
+  start /wait "" "%TEMP%\OllamaSetup.exe"
+)
+if not exist "%OLLAMA_EXE%" (
+  where ollama >nul 2>&1 || (
+    echo [!] Ollama doesn't seem to be installed. You can install it later from https://ollama.com/download
+    exit /b 0
+  )
+  set "OLLAMA_EXE=ollama"
+)
+:local_ai_model
+rem Make sure the Ollama server is running, then download a model if none is installed yet
+"%OLLAMA_EXE%" list >nul 2>&1 || (start "" /min "%OLLAMA_EXE%" serve & timeout /t 5 /nobreak >nul)
+for /f "skip=1 tokens=1" %%M in ('call "%OLLAMA_EXE%" list 2^>nul') do exit /b 0
+if exist "%PROJECT%\.aria-local-ai-model" exit /b 0
+> "%PROJECT%\.aria-local-ai-model" echo llama3.2:3b
+echo [*] Downloading the free AI model llama3.2:3b (about 2 GB, once)...
+"%OLLAMA_EXE%" pull llama3.2:3b
+if errorlevel 1 (
+  del "%PROJECT%\.aria-local-ai-model" >nul 2>&1
+  echo [!] The model download didn't finish. You can retry from Aria's chat screen ^(Download and use^).
+)
+exit /b 0
+
+:pick_mode
 if /i "%MODE%"=="native" goto :native
 if /i "%CMD%"=="update" goto :download
 if not exist "%PROJECT%\docker-compose.yml" goto :download
@@ -143,6 +195,8 @@ rem --- AI model: connected inside Aria ----------------------------------------
 rem Nothing to do here. When no model is connected yet, Aria's chat screen shows a box
 rem where you paste your API key; it is checked and saved by Aria itself.
 
+call :offer_local_ai
+
 rem --- Build and start --------------------------------------------------------
 echo [*] Starting Aria. The first time this downloads and builds everything and can take 5-15 minutes...
 %DC% up -d --build
@@ -212,6 +266,7 @@ if not exist "%PROJECT%\aria-native.bat" (
 )
 >"%PROJECT%\.aria-mode" echo native
 echo [*] Running Aria without Docker.
+call :offer_local_ai
 endlocal & call "%PROJECT%\aria-native.bat" %CMD%
 exit /b %errorlevel%
 

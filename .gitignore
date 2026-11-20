@@ -8,3 +8,5 @@ frontend/tsconfig.tsbuildinfo
 runtime/
 data/
 .aria-mode
+.aria-local-ai-asked
+.aria-local-ai-model
