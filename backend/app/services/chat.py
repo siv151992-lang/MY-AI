@@ -69,6 +69,34 @@ async def _user_content(user_id: str, text: str, file_ids: list[str], vision: bo
     return {"role": "user", "content": parts}, docs
 
 
+async def _basic_turn(user: dict, conv: dict, text: str, file_ids: list[str], regenerate: bool) -> AsyncIterator[dict]:
+    from ..basic import engine
+    if regenerate:
+        await db.delete_last_assistant(conv["id"])
+        prior = await db.list_messages(conv["id"])
+        if not prior or prior[-1]["role"] != "user":
+            yield {"type": "error", "message": "Nothing to regenerate."}
+            return
+        text = prior[-1]["content"]
+    else:
+        prior = await db.list_messages(conv["id"])
+        yield {"type": "user_saved", "message": await db.add_message(conv["id"], "user", text, file_ids)}
+    hits = []
+    if not engine.calculate(text) and not engine.convert(text):
+        try:
+            hits = await engine.search_documents(user["id"], text)
+        except Exception:  # noqa: BLE001 - documents are optional here
+            log.exception("basic mode document search failed")
+    reply = engine.answer(text, name=user.get("name", ""), doc_hits=hits)
+    yield {"type": "token", "text": reply}
+    msg = await db.add_message(conv["id"], "assistant", reply, [], {"model": "basic", "basic": True})
+    yield {"type": "done", "message": msg}
+    if not prior and not regenerate:
+        title = " ".join(text.split()[:6])[:80] or "New chat"
+        await db.update_conversation(user["id"], conv["id"], title=title)
+        yield {"type": "title", "title": title}
+
+
 async def _attachment_kinds(user_id: str, file_ids: list[str]) -> set[str]:
     if not file_ids:
         return set()
@@ -146,7 +174,16 @@ async def respond(*, user: dict, conv: dict, text: str, file_ids: list[str], mod
     usage.set_scope(user["id"], feature)
     s = get_settings()
     wanted = model_id or conv.get("model_id")
-    registry.get_model(None)  # raises RuntimeError when no model is configured at all
+    try:
+        registry.get_model(None)
+        no_model = False
+    except RuntimeError:
+        no_model = True
+    if no_model:
+        # No AI model connected: answer simple things from the built-in knowledge base instead of failing.
+        async for ev in _basic_turn(user, conv, text, file_ids, regenerate):
+            yield ev
+        return
     uspec = registry.utility_model()
 
     if regenerate:

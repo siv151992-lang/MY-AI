@@ -155,7 +155,7 @@ export function Composer({ models, modelId, onModelChange, onSend, onStop, busy,
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="max-w-[11rem] text-muted-foreground" disabled={!models.length}>
                 {modelId === AUTO_MODEL && <RouteIcon />}
-                <span className="truncate">{modelId === AUTO_MODEL && models.length ? "Auto" : model?.label ?? (models.length ? "Select model" : "No models configured")}</span>
+                <span className="truncate">{modelId === AUTO_MODEL && models.length ? "Auto" : model?.label ?? (models.length ? "Select model" : "Basic mode (no AI model)")}</span>
                 <ChevronDown />
               </Button>
             </DropdownMenuTrigger>

@@ -28,6 +28,8 @@ async def lifespan(app: FastAPI):
     await db.migrate(s.embedding_dim, s.disable_pgvector)
     from .setup import load as load_app_settings
     await load_app_settings()
+    from .local_ai import discover
+    await discover(force=True)  # free local AI (Ollama) is connected automatically when it is running
     if not db.VECTOR_ENABLED:
         log.warning("pgvector is not installed: semantic search is off, using full-text search only.")
     if not s.sandbox_url:

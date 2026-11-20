@@ -49,6 +49,15 @@ Aria is a full-stack AI assistant in the style of Claude and ChatGPT. It plans, 
                                                    └────────────────────────────────┘
 ```
 
+## Free local AI and basic mode (no API key)
+
+- **Free local AI.** Aria finds an [Ollama](https://ollama.com) server running on the same computer by itself. From Docker it reaches the host through `host.docker.internal`. Every chat model installed in Ollama shows up in the model list as `ollama:<name>`.
+  - **Downloading a model:** if Ollama is running but has no model yet, the chat screen offers a one-click download with a progress bar: `llama3.2:3b` (2 GB, about 8 GB RAM), `qwen2.5:7b` (4.7 GB, about 16 GB RAM) or `llama3.2:1b`.
+  - **The launcher:** on first run, `aria.bat` offers to install Ollama (with winget, or the official installer) and download `llama3.2:3b`. It only asks once, and skips the question when an API key is already set.
+  - **Models without tool support:** if a model can't use tools, Aria answers without them instead of failing.
+  - **Privacy:** chats with local models never leave the computer.
+- **Basic mode.** With no model connected at all, chat still answers simple things without any AI. It handles greetings and small talk, help with Aria, the date and time, safe arithmetic (`15% of 80`, `sqrt(144)`), unit conversions (length, mass, volume, speed, temperature), capitals, and a small built-in fact base (`backend/app/basic/knowledge.py`; add your own entries there). It also does keyword search of your uploaded documents, quoting the file and page. When basic mode doesn't know something, it says so instead of guessing. Answers are marked `basic`.
+
 ## Platform hub: one workspace for everything
 
 Aria opens on **Home** (`/home`): a single box for any request. As you type, the adaptive router shows how it would handle it. You see the task type, its complexity, the model it would use, the tools it needs and the reasons. You can then **Ask in chat**, or launch the workspace it suggests: Deep research, the agent team, a code workspace, or an automation. Home also shows live tasks, your projects and the last 7 days of usage. Every page shares one navigation bar.

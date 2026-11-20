@@ -41,8 +41,13 @@ def available_models() -> list[ModelSpec]:
     """Only models whose provider is configured are offered to users."""
     enabled = providers()
     keys = set(ModelSpec.__dataclass_fields__)
+    from .. import local_ai
+    catalog = get_settings().model_catalog()
+    local = local_ai.catalog_entries()
+    if local or local_ai.STATE["root"]:  # the models actually installed in Ollama replace the static example entry
+        catalog = [m for m in catalog if m["provider"] != "ollama"] + local
     return [ModelSpec(**{**{k: v for k, v in m.items() if k in keys}, "strengths": tuple(m.get("strengths") or ())})
-            for m in get_settings().model_catalog() if m["provider"] in enabled]
+            for m in catalog if m["provider"] in enabled]
 
 
 def get_model(model_id: str | None) -> ModelSpec:

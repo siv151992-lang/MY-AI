@@ -36,6 +36,8 @@ class MessageIn(BaseModel):
 
 @router.get("/models")
 async def models(user: dict = Depends(current_user)):
+    from ..local_ai import discover
+    await discover()  # picks up Ollama if it was started (or a model was installed) since the last check
     try:
         default = registry.get_model(None).id
     except RuntimeError:
@@ -116,11 +118,7 @@ async def send_message(conv_id: str, body: MessageIn, request: Request, user: di
     conv = await _owned(user, conv_id)
     if not body.regenerate and not body.content.strip() and not body.file_ids:
         raise HTTPException(422, "Message is empty")
-    try:
-        registry.get_model(body.model_id)
-    except RuntimeError as e:
-        raise HTTPException(503, str(e))
-    from ..documents import access
+    from ..documents import access  # with no model connected, chat answers in basic mode (built-in knowledge)
     body.file_ids = await access.filter_readable(user["id"], body.file_ids)  # never attach documents the user can't read
 
     async def stream():

@@ -108,3 +108,25 @@ def test_paste_key_in_chat_connects_model(app_env, monkeypatch):
         assert get_settings().anthropic_api_key == "sk-ant-good-key-123" and get_settings().tavily_api_key == "tvly-abc12345"
         assert c.delete("/api/setup/key/anthropic", headers=H).json()["configured"] is False
         assert c.delete("/api/setup/key/openai", headers=H).status_code == 409
+
+
+def test_chat_works_in_basic_mode_without_any_model(app_env):
+    """No key and no local AI: chat still answers simple things from the built-in knowledge base."""
+    import json as _json
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    with TestClient(app) as c:
+        assert c.post("/api/auth/signup", json={"email": "b@example.com", "name": "Bo", "password": "password1234"},
+                      headers=H).status_code == 200
+        conv = c.post("/api/conversations", json={}, headers=H).json()
+        r = c.post(f"/api/conversations/{conv['id']}/messages", json={"content": "what is 15% of 80"}, headers=H)
+        assert r.status_code == 200, r.text
+        events = [_json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+        done = next(e for e in events if e["type"] == "done")["message"]
+        assert "**12**" in done["content"] and done["meta"]["basic"] is True
+        r = c.post(f"/api/conversations/{conv['id']}/messages", json={"content": "capital of Japan?"}, headers=H)
+        assert "**Tokyo**" in r.text
+        msgs = c.get(f"/api/conversations/{conv['id']}").json()["messages"]
+        assert [m["role"] for m in msgs] == ["user", "assistant", "user", "assistant"]
